@@ -1,0 +1,1643 @@
+<!doctype html>
+<!--
+THESIS: A PubMed psych search that reads like a plain-text worksheet: variables and
+numbers in boxes, studies in boxes, nothing else.
+OWN-WORLD: Pinned by the user to her Lykos site — white, black Menlo mono 13px/1.7,
+1px black boxes, #00f hover, crosshair cursor, lowercase copy. Highlighter yellow kept
+for matched terms.
+STORY: Enter variables + design, search; the bar collapses; the sidebar holds the
+variables and the counts; each study box leads with its numbers (year, N, k, effects).
+FIRST VIEWPORT: "cut." header, search bar, sidebar boxes left, study boxes right.
+FORM: User-pinned direction (beats the seed roll, per brief).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cut</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:#fff; color:#000;
+    font-family:Menlo, monospace;
+    font-size:13px; line-height:1.7;
+    cursor:crosshair;
+  }
+  a { color:#000; text-decoration:none; cursor:crosshair; }
+  a:hover { color:#00f; }
+  button { font-family:Menlo, monospace; font-size:13px; background:none; border:0; cursor:crosshair; color:#000; }
+  button:hover { color:#00f; }
+  input, select { font-family:Menlo, monospace; font-size:13px; color:#000; background:#fff; cursor:crosshair; }
+  :is(a,button,input,select,summary):focus-visible { outline:1px solid #00f; outline-offset:1px; }
+  mark { background:#FFE9A8; color:#000; }
+
+  header { padding:1.25rem 2rem 0; }
+  header .wordmark { font-weight:bold; }
+
+  /* ---------- search bar ---------- */
+  #searchbar { padding:1rem 2rem; border-bottom:1px solid #000; }
+  #searchbar.collapsed .full { display:none; }
+  #searchbar .summary { display:none; }
+  #searchbar.collapsed .summary { display:flex; gap:1.5rem; flex-wrap:wrap; align-items:baseline; }
+  .srow { display:flex; gap:1rem; flex-wrap:wrap; align-items:baseline; margin-bottom:.5rem; }
+  .srow:last-child { margin-bottom:0; }
+  .slabel { width:6.5ch; flex:none; }
+  #termInput {
+    border:1px solid #000; padding:.2rem .5rem; width:24rem; max-width:100%;
+  }
+  #termInput:focus { outline:1px solid #00f; }
+  .design-opt[aria-pressed="true"] { color:#00f; }
+  .design-opt[aria-pressed="true"]::before { content:"["; }
+  .design-opt[aria-pressed="true"]::after { content:"]"; }
+  #designPicker { display:inline-flex; flex-wrap:wrap; gap:1rem; }
+  #apiKey { border:1px solid #000; padding:.2rem .5rem; width:16rem; }
+  .mini { display:inline-block; border:1px solid #000; color:#000; background:#fff; padding:0 .35rem; margin:.12rem .2rem .12rem 0;
+    word-break:normal; overflow-wrap:break-word; text-align:left; }
+  .pend { display:inline-block; overflow:hidden; white-space:nowrap; vertical-align:bottom;
+    animation:typedots 1.2s steps(4,end) infinite; }
+  @keyframes typedots { from{width:0ch} to{width:4ch} }
+  .fstat { font-weight:bold; text-align:left; }
+  .fline { text-align:left; margin-bottom:.35rem; }
+  .fblock { margin:.1rem 0 .3rem; }
+  details.ofind { margin-top:.5rem; }
+  details.ofind summary { cursor:crosshair; color:#555; }
+  details.ofind summary:hover { color:#00f; }
+  .databox .fnote { color:#555; text-align:left; margin-bottom:.35rem; }
+  .sugg { display:inline-block; border:1px dashed #000; padding:0 .35rem; margin:.12rem .2rem .12rem 0;
+    background:none; line-height:1.7; }
+  .sugg:hover { color:#00f; border-color:#00f; }
+  .sugg-group { margin:.3rem 0; }
+  .sugg-group .for { color:#555; }
+  #relatedBtn { border:1px solid #000; padding:.05rem .5rem; margin-top:.4rem; }
+  #reSearchBtn { border:1px solid #000; padding:.05rem .5rem; margin-top:.4rem; background:#000; color:#fff; }
+  #reSearchBtn:hover { background:#00f; color:#fff; }
+  #exportBtn, #clearPicksBtn, #metaBtn { border:1px solid #000; padding:.05rem .5rem; margin-top:.4rem; margin-right:.5rem; }
+  .metapanel { border:1px solid #000; padding:.7rem 1rem; margin-bottom:1rem; background:#fff; }
+  .metapanel pre { font-family:Menlo, monospace; white-space:pre; overflow-x:auto; margin:.4rem 0; }
+  .metapanel .mclose { float:right; }
+  .pick { margin-left:auto; }
+  label.tog input:disabled + span, label.tog:has(input:disabled) { color:#888; }
+  #claudeStatus { margin:.25rem 0; color:#555; }
+  #claudeStatus .err { color:#a00; }
+  label.tog { display:inline-flex; gap:.5ch; align-items:baseline; cursor:crosshair; }
+  .yr input { width:6ch; border:1px solid #000; padding:.1rem .3rem; text-align:center; }
+  select { border:1px solid #000; padding:.1rem .3rem; }
+  #searchBtn { border:1px solid #000; padding:.2rem 1rem; }
+  #searchBtn:disabled { color:#888; border-color:#888; cursor:default; }
+
+  /* ---------- layout ---------- */
+  .layout { display:grid; grid-template-columns:16rem minmax(0,1fr); gap:1.5rem; padding:1.5rem 2rem 3rem; }
+  aside { position:sticky; top:1rem; align-self:start; display:flex; flex-direction:column; gap:1rem; }
+  .box { border:1px solid #000; padding:.75rem 1rem; background:#fff; }
+  .box h2 { font-size:13px; font-weight:bold; margin-bottom:.4rem; }
+  .varbox { border:1px solid #000; padding:.15rem .5rem .25rem; margin:.25rem 0; }
+  .varhead { display:flex; gap:.5rem; align-items:baseline; }
+  .vname { flex:1; text-align:left; padding:0; }
+  .vcount { color:#555; font-weight:normal; }
+  .vitem { display:inline-flex; gap:.35rem; align-items:baseline; border:1px solid #000; background:#fff;
+    padding:0 .35rem; margin:.2rem .25rem 0 0; }
+  .vitem button { padding:0; line-height:1.4; }
+  .numline { display:flex; justify-content:space-between; gap:1rem; }
+  .numline b { font-weight:bold; }
+
+  .study-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:1rem; align-items:start; margin-bottom:1rem; }
+  .study { border:1px solid #000; padding:.9rem 1.1rem; }
+  .databox { border:1px solid #000; padding:.7rem 1rem; background:#fff; color:#000; }
+  .databox .drow { margin-bottom:.3rem; }
+  .databox .drow b { font-weight:bold; }
+  .databox .dhead { font-weight:bold; margin-top:.45rem; }
+  .databox .dval { margin-bottom:.3rem; }
+  .databox .findbox { background:#EFEFEF; border:1px solid #000; padding:.45rem .7rem; margin:.3rem 0 .5rem; }
+  @media (max-width:1150px){
+    .study-row { grid-template-columns:1fr; }
+  }
+  .study h3 { font-size:13px; font-weight:bold; }
+  .study h3 a:hover { color:#00f; }
+  .byline { margin-top:.1rem; }
+  .numrow { margin-top:.3rem; }
+  .numrow span { margin-right:1.5rem; }
+  .numrow b { font-weight:bold; }
+  .abstract {
+    margin-top:.5rem; max-width:80ch;
+    display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  .abstract.open { display:block; -webkit-line-clamp:unset; overflow:visible; }
+  .abstract .slabel2 { font-weight:bold; }
+  .row-actions { margin-top:.4rem; display:flex; gap:1.5rem; }
+  .no-abstract { color:#555; }
+
+  details.qtrans code { display:block; margin:.3rem 0 0; white-space:pre-wrap; word-break:break-word; color:#333; }
+  details.qtrans summary { cursor:crosshair; }
+  #loadMore { border:1px solid #000; padding:.2rem 1rem; margin-top:.25rem; }
+  .state { padding:.25rem 0; }
+  .state .err { color:#a00; }
+  .retry { border:1px solid #000; padding:.1rem .8rem; margin-top:.3rem; }
+
+  @media (max-width:760px){
+    header, #searchbar { padding-left:1rem; padding-right:1rem; }
+    .layout { grid-template-columns:1fr; padding:1rem; }
+    aside { position:static; }
+    #termInput { width:100%; }
+  }
+</style>
+</head>
+<body>
+
+<header><span class="wordmark">cut</span></header>
+
+<section id="searchbar" aria-label="search">
+  <div class="full">
+    <div class="srow">
+      <span class="slabel">terms</span>
+      <input id="termInput" type="text" placeholder="e.g. sleep — enter to add" aria-label="variable term">
+    </div>
+    <div class="srow">
+      <span class="slabel">design</span>
+      <span id="designPicker"></span>
+    </div>
+    <div class="srow">
+      <span class="slabel">scope</span>
+      <label class="tog"><input type="checkbox" id="psychOnly" checked> psych only</label>
+      <label class="tog"><input type="checkbox" id="humansOnly"> humans only</label>
+      <span class="yr">years <input id="yrFrom" type="text" inputmode="numeric" maxlength="4" placeholder="1900" aria-label="year from"> – <input id="yrTo" type="text" inputmode="numeric" maxlength="4" placeholder="2026" aria-label="year to"></span>
+      <span>sort <select id="sortSel" aria-label="sort"><option value="relevance">best match</option><option value="pub_date">newest</option></select></span>
+      <span>source
+        <label class="tog"><input type="checkbox" id="srcPubmed" checked> pubmed</label>
+        <label class="tog"><input type="checkbox" id="srcEpmc"> europe pmc</label>
+        <label class="tog"><input type="checkbox" id="srcOa"> openalex</label>
+        <label class="tog"><input type="checkbox" id="srcWos"> wos</label>
+        <input id="wosKey" type="password" placeholder="wos api key" aria-label="web of science api key" autocomplete="off" style="width:11rem;border:1px solid #000;padding:.1rem .4rem">
+        <button id="wosTestBtn" type="button" style="border:1px solid #000;padding:0 .5rem">test</button>
+        <span id="wosTestMsg"></span>
+      </span>
+    </div>
+    <div class="srow">
+      <span class="slabel" style="width:auto">fill in findings with API</span>
+      <span id="claudeMode"></span>
+      <span>model <select id="modelSel" aria-label="claude model">
+        <option value="claude-opus-5" selected>opus 5</option>
+        <option value="claude-sonnet-5">sonnet 5</option>
+        <option value="claude-haiku-4-5">haiku 4.5</option>
+      </select></span>
+      <label class="tog"><input type="checkbox" id="fullText"> full text (open-access papers)</label>
+      <input id="apiKey" type="password" placeholder="api key" aria-label="anthropic api key" autocomplete="off">
+    </div>
+    <div class="srow">
+      <span class="slabel"></span>
+      <button id="searchBtn" type="button">search</button>
+    </div>
+  </div>
+  <div class="summary">
+    <span id="sumline"></span>
+    <button id="editBtn" type="button">[edit]</button>
+  </div>
+</section>
+
+<div class="layout">
+  <aside>
+    <div class="box" id="varsBox">
+      <h2>variables</h2>
+      <div id="varList"></div>
+      <button id="relatedBtn" type="button" style="display:none">related terms</button>
+      <div id="suggList"></div>
+      <button id="reSearchBtn" type="button" style="display:none">search again</button>
+    </div>
+    <div class="box" id="numsBox">
+      <h2>results</h2>
+      <div id="numsList"></div>
+    </div>
+    <div class="box" id="pickBox">
+      <h2>selected</h2>
+      <div id="pickCount">0 studies</div>
+      <button id="metaBtn" type="button" style="display:none">meta-analyse</button>
+      <button id="exportBtn" type="button" style="display:none">export csv</button>
+      <button id="clearPicksBtn" type="button" style="display:none">clear</button>
+    </div>
+  </aside>
+  <main>
+    <div id="results" aria-live="polite"><p class="state">add variables and search.</p></div>
+  </main>
+</div>
+
+<script>
+"use strict";
+
+const DESIGNS = [
+  { key:"meta",   label:"meta-analysis",     filter:`"meta-analysis"[pt]` },
+  { key:"sysrev", label:"systematic review", filter:`"systematic review"[pt]` },
+  { key:"rct",    label:"rct",               filter:`"randomized controlled trial"[pt]` },
+  { key:"trial",  label:"any trial",         filter:`"clinical trial"[pt]` },
+  { key:"obs",    label:"observational",     filter:`(("observational study"[pt] OR "cohort studies"[mh] OR "case-control studies"[mh] OR "cross-sectional studies"[mh] OR "longitudinal studies"[mh]) NOT ("meta-analysis"[pt] OR "systematic review"[pt] OR "review"[pt]))` },
+];
+const DESIGN_NAME = { meta:"meta-analysis", sysrev:"systematic review", review:"review",
+  rct:"rct", trial:"clinical trial", obs:"observational", case:"case report", other:"untyped" };
+
+const PSYCH_FILTER = `("behavior and behavior mechanisms"[mh] OR "psychological phenomena"[mh] OR "mental disorders"[mh] OR "behavioral disciplines and activities"[mh])`;
+const EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
+const PAGE = 25;
+
+const state = { chips:[], designs:[], offset:0, total:0, translation:"", lastTerm:"",
+  sort:"relevance", source:"pubmed", cursor:"*", loading:false, loadedNs:[], claudeMode:"off",
+  selected:new Map(),
+  suggested:new Set(),      // head terms that have had related terms fetched (or attempted)
+  suggPending:new Map() };  // head term -> in-flight fetch promise
+
+const termInput = document.getElementById("termInput");
+const designPicker = document.getElementById("designPicker");
+const resultsEl = document.getElementById("results");
+const searchBtn = document.getElementById("searchBtn");
+const searchbar = document.getElementById("searchbar");
+
+/* ---------- sidebar ---------- */
+const VARCOLORS = ["#FFB3B3","#B3F0B3","#CDE3FF","#FFE9A8","#E6DCF2","#FFE0CC"];
+const chipColor = i => VARCOLORS[((i % VARCOLORS.length) + VARCOLORS.length) % VARCOLORS.length];
+// A chip is "head OR variant OR variant". A variant prefixed with "-" is unticked:
+// it stays in the sidebar for the user to re-tick but is left out of the search
+// and the regex pass. The head term is always on.
+const OFF = "-";
+function splitChip(chip){ return chip.split(/\s+OR\s+/i).map(t => t.trim()).filter(Boolean); }
+function isOff(v, vi){ return vi > 0 && v.startsWith(OFF); }
+function chipHead(chip){ return (splitChip(chip)[0] || "").toLowerCase(); }
+// The chips as every search and regex consumer should see them: ticked variants only.
+function activeChips(){
+  return state.chips.map(chip => splitChip(chip).filter((v, vi) => !isOff(v, vi)).join(" OR "));
+}
+function renderVars(){
+  const list = document.getElementById("varList");
+  list.innerHTML = "";
+  state.varOpen = state.varOpen || {};
+  state.chips.forEach((chip, i) => {
+    const variants = splitChip(chip);
+    const onCount = variants.filter((v, vi) => !isOff(v, vi)).length;
+    const div = document.createElement("div");
+    div.className = "varbox";
+    div.style.background = chipColor(i);
+    const head = document.createElement("div");
+    head.className = "varhead";
+    const name = document.createElement("button");
+    name.type = "button"; name.className = "vname";
+    name.innerHTML = escapeHTML(variants[0] || chip) +
+      (variants.length > 1 ? ` <span class="vcount">(${onCount})</span>` : "") +
+      (state.suggPending.has(chipHead(chip)) ? ` <span class="pend" title="finding related terms">...</span>` : "");
+    name.setAttribute("aria-expanded", String(!!state.varOpen[i]));
+    name.addEventListener("click", () => { state.varOpen[i] = !state.varOpen[i]; renderVars(); });
+    const add = document.createElement("button"); add.type = "button"; add.textContent = "+";
+    add.setAttribute("aria-label", `add a term to ${variants[0]}`);
+    const x = document.createElement("button"); x.type = "button"; x.textContent = "×";
+    x.setAttribute("aria-label", `remove ${variants[0]}`);
+    x.addEventListener("click", () => {
+      state.chips.splice(i, 1); renderVars();
+      if (state.lastTerm) state.chips.length ? runSearch(true) : resetResults();
+    });
+    head.append(name, add, x);
+    div.appendChild(head);
+    add.addEventListener("click", () => {
+      if (div.querySelector("input")) return;
+      const inp = document.createElement("input");
+      inp.type = "text"; inp.placeholder = "add term";
+      inp.style.cssText = "border:1px solid #000;padding:0 .3rem;width:10rem;max-width:100%;margin:.2rem 0 0";
+      inp.addEventListener("keydown", ev => {
+        if (ev.key === "Enter"){
+          const v = inp.value.trim();
+          if (v){
+            state.chips[i] = state.chips[i] + " OR " + v;
+            state.varOpen[i] = true;
+            renderVars();
+            document.getElementById("reSearchBtn").style.display = "";
+          } else inp.remove();
+        } else if (ev.key === "Escape") inp.remove();
+      });
+      div.appendChild(inp);
+      inp.focus();
+    });
+    if (state.varOpen[i] && variants.length){
+      const wrap = document.createElement("div");
+      variants.forEach((v, vi) => {
+        const item = document.createElement("span");
+        item.className = "vitem";
+        const off = isOff(v, vi);
+        if (vi > 0){
+          const tick = document.createElement("input");
+          tick.type = "checkbox"; tick.checked = !off;
+          tick.setAttribute("aria-label", `include ${off ? v.slice(OFF.length) : v}`);
+          tick.addEventListener("change", () => {
+            variants[vi] = tick.checked ? v.replace(/^-/, "") : OFF + v.replace(/^-/, "");
+            state.chips[i] = variants.join(" OR ");
+            renderVars();
+            if (state.lastTerm) document.getElementById("reSearchBtn").style.display = "";
+          });
+          item.appendChild(tick);
+        }
+        if (off) item.style.color = "#888";
+        item.appendChild(document.createTextNode(off ? v.slice(OFF.length) : v));
+        const vx = document.createElement("button");
+        vx.type = "button"; vx.textContent = "×";
+        vx.setAttribute("aria-label", `remove term ${v}`);
+        vx.addEventListener("click", () => {
+          variants.splice(vi, 1);
+          if (variants.length) state.chips[i] = variants.join(" OR ");
+          else state.chips.splice(i, 1);
+          renderVars();
+          document.getElementById("reSearchBtn").style.display = "";
+        });
+        item.appendChild(vx);
+        wrap.appendChild(item);
+      });
+      div.appendChild(wrap);
+    }
+    list.appendChild(div);
+  });
+  if (!state.chips.length){
+    const p = document.createElement("div"); p.textContent = "—"; list.appendChild(p);
+  }
+  const rb = document.getElementById("relatedBtn");
+  if (rb) rb.style.display = state.chips.length ? "" : "none";
+}
+function renderNums(){
+  const el = document.getElementById("numsList");
+  if (!state.lastTerm){ el.innerHTML = "<div>—</div>"; return; }
+  const ns = state.loadedNs.filter(n => n != null).sort((a,b)=>a-b);
+  const median = ns.length ? ns[Math.floor(ns.length/2)] : null;
+  el.innerHTML =
+    `<div class="numline"><span>records</span><b>${state.total.toLocaleString("en-US")}</b></div>` +
+    `<div class="numline"><span>shown</span><b>${state.offset}</b></div>` +
+    (median != null ? `<div class="numline"><span>median N</span><b>${median.toLocaleString("en-US")}</b></div>` : "");
+}
+function resetResults(){
+  state.lastTerm = ""; state.total = 0; state.offset = 0; state.loadedNs = [];
+  resultsEl.innerHTML = `<p class="state">add variables and search.</p>`;
+  renderNums(); expandBar();
+}
+
+/* ---------- search bar ---------- */
+DESIGNS.forEach(d => {
+  const lab = document.createElement("label");
+  lab.className = "tog";
+  const cb = document.createElement("input");
+  cb.type = "checkbox"; cb.value = d.key;
+  cb.addEventListener("change", () => {
+    state.designs = [...designPicker.querySelectorAll("input:checked")].map(c => c.value);
+  });
+  lab.append(cb, document.createTextNode(" " + d.label));
+  designPicker.appendChild(lab);
+});
+function syncDesignBoxes(){
+  designPicker.querySelectorAll("input").forEach(cb => { cb.checked = state.designs.includes(cb.value); });
+}
+
+/* ---------- claude controls ---------- */
+[["gaps","fill gaps"],["all","check all"]].forEach(([mode, label]) => {
+  const lab = document.createElement("label");
+  lab.className = "tog";
+  lab.style.marginRight = ".5rem";
+  const cb = document.createElement("input");
+  cb.type = "checkbox"; cb.value = mode;
+  cb.addEventListener("change", () => {
+    if (cb.checked){
+      document.querySelectorAll("#claudeMode input").forEach(o => { if (o !== cb) o.checked = false; });
+      state.claudeMode = mode;
+    } else {
+      state.claudeMode = "off";
+    }
+  });
+  lab.append(cb, document.createTextNode(" " + label));
+  document.getElementById("claudeMode").appendChild(lab);
+});
+const apiKeyInput = document.getElementById("apiKey");
+try { apiKeyInput.value = localStorage.getItem("cut_api_key") || ""; } catch(e){}
+apiKeyInput.addEventListener("change", () => {
+  try { localStorage.setItem("cut_api_key", apiKeyInput.value.trim()); } catch(e){}
+});
+function readSources(){
+  const s = [];
+  if (document.getElementById("srcPubmed").checked) s.push("pubmed");
+  if (document.getElementById("srcEpmc").checked) s.push("epmc");
+  if (document.getElementById("srcOa").checked) s.push("openalex");
+  if (document.getElementById("srcWos").checked) s.push("wos");
+  if (!s.length){ document.getElementById("srcPubmed").checked = true; s.push("pubmed"); }
+  return s;
+}
+const wosKeyInput = document.getElementById("wosKey");
+try { wosKeyInput.value = localStorage.getItem("cut_wos_key") || ""; } catch(e){}
+wosKeyInput.addEventListener("change", () => {
+  try { localStorage.setItem("cut_wos_key", wosKeyInput.value.trim()); } catch(e){}
+});
+document.getElementById("wosTestBtn").addEventListener("click", async () => {
+  const msg = document.getElementById("wosTestMsg");
+  const key = wosKeyInput.value.trim();
+  if (!key){ msg.textContent = "paste a key first"; msg.style.color = "#a00"; return; }
+  msg.textContent = "checking\u2026"; msg.style.color = "#555";
+  try {
+    const d = await wosFetch(`/wos?key=${encodeURIComponent(key)}&q=${encodeURIComponent("TS=(psychology)")}&limit=1&page=1`);
+    if (d.message) throw new Error(d.message);
+    const total = d.metadata?.total;
+    msg.textContent = `wos key works${total != null ? ` (${Number(total).toLocaleString("en-US")} records for a test query)` : ""} \u2014 tick the wos box to include it`;
+    msg.style.color = "#080";
+  } catch (e){
+    msg.textContent = "wos key failed: " + (/Failed to fetch|NetworkError|load failed/i.test(String(e.message))
+      ? "local relay unreachable \u2014 rerun Start cut.command" : e.message);
+    msg.style.color = "#a00";
+  }
+});
+["srcPubmed","srcEpmc","srcOa","srcWos"].forEach(id =>
+  document.getElementById(id).addEventListener("change", () => {
+    const pm = document.getElementById("srcPubmed").checked;
+    const oa = document.getElementById("srcOa").checked;
+    document.getElementById("psychOnly").disabled = !pm && !oa;
+    document.getElementById("humansOnly").disabled = !pm;
+  }));
+
+function commitTerm(){
+  const v = termInput.value.trim().replace(/^'|'$/g,"");
+  if (v){ state.chips.push(v); termInput.value=""; renderVars(); ensureSuggestions(); }
+}
+termInput.addEventListener("keydown", e => {
+  if (e.key === "Enter"){
+    e.preventDefault();
+    if (!termInput.value.trim() && state.chips.length) runSearch(true);
+    else commitTerm();
+  } else if (e.key === "Backspace" && !termInput.value && state.chips.length){
+    state.chips.pop(); renderVars();
+  }
+});
+searchBtn.addEventListener("click", () => runSearch(true));
+["yrFrom","yrTo"].forEach(id =>
+  document.getElementById(id).addEventListener("keydown", e => {
+    if (e.key==="Enter"){ e.preventDefault(); runSearch(true); }
+  }));
+document.getElementById("editBtn").addEventListener("click", expandBar);
+document.getElementById("relatedBtn").addEventListener("click", findRelatedTerms);
+document.getElementById("reSearchBtn").addEventListener("click", () => {
+  document.getElementById("reSearchBtn").style.display = "none";
+  runSearch(true);
+});
+function collapseBar(){
+  const labels = DESIGNS.filter(x => state.designs.includes(x.key)).map(x => x.label);
+  document.getElementById("sumline").textContent =
+    activeChips().join(" AND ") + (labels.length ? ` — ${labels.join(", ")}` : "");
+  searchbar.classList.add("collapsed");
+}
+function expandBar(){ searchbar.classList.remove("collapsed"); termInput.focus(); }
+
+/* ---------- query ---------- */
+function buildTerm(){
+  const parts = [];
+  for (const chip of activeChips()){
+    const ors = chip.split(/\s+OR\s+/i).map(t => {
+      t = t.trim();
+      const q = /^"(.*)"$/.exec(t);
+      if (q) return `"${q[1].replace(/"/g,"")}"[tiab]`;
+      const clean = t.replace(/"/g,"");
+      return (!/\s/.test(clean) && !clean.endsWith("*")) ? `"${clean}*"[tiab]` : `"${clean}"[tiab]`;
+    });
+    parts.push(ors.length>1 ? `(${ors.join(" OR ")})` : ors[0]);
+  }
+  const fs = DESIGNS.filter(x => state.designs.includes(x.key)).map(x => x.filter);
+  if (fs.length) parts.push(fs.length > 1 ? `(${fs.join(" OR ")})` : fs[0]);
+  if (document.getElementById("psychOnly").checked) parts.push(PSYCH_FILTER);
+  if (document.getElementById("humansOnly").checked) parts.push(`"humans"[mh]`);
+  const yf = document.getElementById("yrFrom").value.trim();
+  const yt = document.getElementById("yrTo").value.trim();
+  if (/^\d{4}$/.test(yf) || /^\d{4}$/.test(yt))
+    parts.push(`(${/^\d{4}$/.test(yf)?yf:"1800"}:${/^\d{4}$/.test(yt)?yt:"3000"}[dp])`);
+  return parts.join(" AND ");
+}
+
+/* ---------- fetch ---------- */
+async function eFetchJSON(url){
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`NCBI returned ${r.status}`);
+  return r.json();
+}
+// The local relay passes Clarivate's status and JSON body through; read the
+// body even on an error status so the user sees "Unauthorized" rather than a code.
+async function wosFetch(url){
+  const r = await fetch(url);
+  const d = await r.json().catch(() => null);
+  if (!r.ok) throw new Error((d && (d.message || d.error)) || `wos returned ${r.status}`);
+  return d || {};
+}
+async function eFetchXML(url){
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`NCBI returned ${r.status}`);
+  return new DOMParser().parseFromString(await r.text(), "text/xml");
+}
+
+function runSearch2(){ return runSearch(false, true); }
+async function runSearch(fresh, refetch){
+  if (state.loading) return;
+  if (refetch) fresh = false;
+  if (fresh){
+    commitTerm();
+    if (!state.chips.length){ termInput.focus(); return; }
+    state.offset = 0; state.loadedNs = [];
+    state.pmOffset = 0; state.pmTotal = 0;
+    state.cursor = "*"; state.epTotal = 0; state.epShown = 0;
+    state.oaCursor = "*"; state.oaTotal = 0; state.oaShown = 0;
+    state.wosPage = 1; state.wosTotal = 0; state.wosShown = 0;
+    state.sort = document.getElementById("sortSel").value;
+    state.sources = readSources();
+    state.designScreen = null;
+    // Related terms must be on screen (tickable) before the first search runs.
+    const inflight = [...new Set(state.suggPending.values())];
+    const started = ensureSuggestions();
+    if (started) inflight.push(started);
+    if (inflight.length){
+      claudeStatus("API: finding related terms\u2026");
+      const added = (await Promise.all(inflight)).reduce((a, b) => a + b, 0);
+      if (added > 0){
+        claudeStatus("related terms added in the variables box \u2014 untick any you don\u2019t want, then press search again.");
+        return;
+      }
+      claudeStatus("");
+    }
+    state.pmTerm = state.sources.includes("pubmed") ? buildTerm() : "";
+    state.epTerm = state.sources.includes("epmc")
+      ? buildTermEpmc() + (state.sources.includes("pubmed") ? " NOT SRC:MED" : "")
+      : "";
+    state.oaTerm = state.sources.includes("openalex") ? buildTermOa() : "";
+    state.wosTerm = state.sources.includes("wos") ? buildTermWos() : "";
+    state.lastTerm = state.pmTerm || state.epTerm || state.oaTerm || state.wosTerm;
+  }
+  setLoading(true);
+  try {
+    const per = state.sources.length > 1 ? Math.ceil(PAGE / 2) : PAGE;
+    const jobs = [];
+    if (state.sources.includes("pubmed") && (fresh || refetch || state.pmOffset < state.pmTotal)){
+      jobs.push({ name: "pubmed", p: (async () => {
+        const es = await eFetchJSON(`${EUTILS}/esearch.fcgi?db=pubmed&retmode=json&retmax=${per}` +
+          `&retstart=${state.pmOffset}&sort=${state.sort}&tool=cut-psych&term=${encodeURIComponent(state.pmTerm)}`);
+        const res = es.esearchresult;
+        if (!res) throw new Error("malformed response from PubMed");
+        state.pmTotal = parseInt(res.count || "0", 10);
+        state.pmTranslation = res.querytranslation || state.pmTerm;
+        const ids = res.idlist || [];
+        state.pmOffset += ids.length;
+        if (!ids.length) return [];
+        const xml = await eFetchXML(`${EUTILS}/efetch.fcgi?db=pubmed&retmode=xml&tool=cut-psych&id=${ids.join(",")}`);
+        let arts = parseArticles(xml);
+        const b = arts.length;
+        arts = arts.filter(isRelevant);
+        state.pmTotal = Math.max(0, state.pmTotal - (b - arts.length));
+        return arts;
+      })() });
+    }
+    if (state.sources.includes("epmc") && (fresh || refetch || (state.cursor && state.epShown < state.epTotal))){
+      jobs.push({ name: "europe pmc", p: (async () => {
+        const sortP = state.sort === "pub_date" ? "&sort=" + encodeURIComponent("P_PDATE_D desc") : "";
+        const es = await eFetchJSON(`https://www.ebi.ac.uk/europepmc/webservices/rest/search` +
+          `?query=${encodeURIComponent(state.epTerm)}&format=json&pageSize=${per}&resultType=core` +
+          `&cursorMark=${encodeURIComponent(state.cursor || "*")}${sortP}`);
+        state.epTotal = es.hitCount || 0;
+        state.cursor = es.nextCursorMark || null;
+        let arts = parseEpmc(es);
+        if (!arts.length) state.cursor = null;
+        const b = arts.length;
+        arts = arts.filter(isRelevant);
+        state.epTotal = Math.max(0, state.epTotal - (b - arts.length));
+        state.epShown += arts.length;
+        return arts;
+      })() });
+    }
+    if (state.sources.includes("openalex") && (fresh || refetch || (state.oaCursor && state.oaShown < state.oaTotal))){
+      jobs.push({ name: "openalex", p: (async () => {
+        const filters = ["title_and_abstract.search:" + state.oaTerm.replace(/,/g, " "), "is_paratext:false"];
+        if (document.getElementById("psychOnly").checked) filters.push("concepts.id:C15744967");
+        if (state.sources.includes("pubmed")) filters.push("has_pmid:false");
+        const yf = document.getElementById("yrFrom").value.trim();
+        const yt = document.getElementById("yrTo").value.trim();
+        if (/^\d{4}$/.test(yf)) filters.push("from_publication_date:" + yf + "-01-01");
+        if (/^\d{4}$/.test(yt)) filters.push("to_publication_date:" + yt + "-12-31");
+        const sortP = state.sort === "pub_date" ? "&sort=" + encodeURIComponent("publication_date:desc") : "";
+        const d = await eFetchJSON("https://api.openalex.org/works?filter=" + encodeURIComponent(filters.join(",")) +
+          "&per-page=" + per + "&cursor=" + encodeURIComponent(state.oaCursor || "*") + sortP);
+        state.oaTotal = d.meta?.count || 0;
+        state.oaCursor = d.meta?.next_cursor || null;
+        let arts = parseOa(d);
+        if (!arts.length) state.oaCursor = null;
+        const b = arts.length;
+        arts = arts.filter(isRelevant);
+        state.oaTotal = Math.max(0, state.oaTotal - (b - arts.length));
+        state.oaShown += arts.length;
+        return arts;
+      })() });
+    }
+    if (state.sources.includes("wos") && (fresh || refetch || state.wosShown < state.wosTotal)){
+      jobs.push({ name: "wos", p: (async () => {
+        const key = wosKeyInput.value.trim();
+        if (!key) throw new Error("add your wos api key next to the wos tick box");
+        const sortP = state.sort === "pub_date" ? "&sortField=" + encodeURIComponent("PY+D") : "";
+        let d;
+        try {
+          d = await wosFetch(`/wos?key=${encodeURIComponent(key)}&q=${encodeURIComponent(state.wosTerm)}` +
+            `&limit=${per}&page=${state.wosPage}${sortP}`);
+        } catch (e){
+          throw /Failed to fetch|NetworkError|load failed/i.test(String(e.message))
+            ? new Error("local relay unreachable — rerun Start cut.command") : e;
+        }
+        if (d.message) throw new Error("wos: " + d.message);
+        state.wosTotal = d.metadata?.total || 0;
+        state.wosPage += 1;
+        let arts = parseWos(d);
+        const before = arts.length;
+        if (state.sources.includes("pubmed")) arts = arts.filter(a => !a.pmid);
+        await hydrateAbstracts(arts);
+        arts = arts.filter(isRelevant);
+        state.wosTotal = Math.max(0, state.wosTotal - (before - arts.length));
+        state.wosShown += arts.length;
+        return arts;
+      })() });
+    }
+    const settled = await Promise.allSettled(jobs.map(j => j.p));
+    const failedSources = [];
+    const arts = [];
+    settled.forEach((r, i) => {
+      if (r.status === "fulfilled") arts.push(...r.value);
+      else failedSources.push(`${jobs[i].name}: ${r.reason?.message || r.reason}`);
+    });
+    if (jobs.length && failedSources.length === jobs.length){
+      const e = new Error(failedSources.join(" · "));
+      e.perSource = true;
+      throw e;
+    }
+    state.total = (state.sources.includes("pubmed") ? state.pmTotal : 0) +
+      (state.sources.includes("epmc") ? state.epTotal : 0) +
+      (state.sources.includes("openalex") ? state.oaTotal : 0) +
+      (state.sources.includes("wos") ? state.wosTotal : 0);
+    state.translation = [
+      state.pmTerm ? (state.pmTranslation || state.pmTerm) : "",
+      state.epTerm ? "europe pmc: " + state.epTerm : "",
+      state.oaTerm ? "openalex: " + state.oaTerm : "",
+      state.wosTerm ? "wos: " + state.wosTerm : "",
+    ].filter(Boolean).join("\n\n");
+    if ((fresh || refetch) && !state.total && state.designs.length && !state.designScreen){
+      state.designScreen = [...state.designs];
+      const saved = state.designs;
+      state.designs = [];
+      state.pmOffset = 0; state.pmTotal = 0;
+      state.cursor = "*"; state.epTotal = 0; state.epShown = 0;
+      state.oaCursor = "*"; state.oaTotal = 0; state.oaShown = 0;
+      state.wosPage = 1; state.wosTotal = 0; state.wosShown = 0;
+      state.pmTerm = state.sources.includes("pubmed") ? buildTerm() : "";
+      state.epTerm = state.sources.includes("epmc")
+        ? buildTermEpmc() + (state.sources.includes("pubmed") ? " NOT SRC:MED" : "")
+        : "";
+      state.oaTerm = state.sources.includes("openalex") ? buildTermOa() : "";
+      state.wosTerm = state.sources.includes("wos") ? buildTermWos() : "";
+      state.designs = saved;
+      setTimeout(runSearch2, 0);
+      return;
+    }
+    if (refetch) fresh = true;
+    let shownArts = arts;
+    const screen = state.designScreen?.length ? state.designScreen : state.designs;
+    if (screen.length){
+      shownArts = arts.filter(a => {
+        const k = classify(a).key;
+        if (k === "other") return true;
+        return screen.includes(k) || (k === "rct" && screen.includes("trial"));
+      });
+    }
+    if (fresh){ clearResults(); collapseBar(); }
+    if (!state.total){ renderNoResults(); renderNums(); return; }
+    if (fresh) renderQtrans();
+    if (shownArts.length) renderStudies(shownArts);
+    state.offset += shownArts.length;
+    document.getElementById("screenNote")?.remove();
+    if (state.designScreen?.length){
+      const note = document.createElement("p");
+      note.id = "screenNote"; note.className = "state";
+      note.style.color = "#555";
+      note.textContent = "no studies carry the selected design tags — showing matches classified from the text instead.";
+      resultsEl.prepend(note);
+    }
+    renderNums();
+    renderLoadMore();
+    document.getElementById("srcErr")?.remove();
+    if (failedSources.length){
+      const note = document.createElement("p");
+      note.id = "srcErr"; note.className = "state err";
+      note.style.color = "#a00";
+      note.textContent = failedSources.join(" · ") + " — other sources shown; search again to retry.";
+      resultsEl.prepend(note);
+    }
+  } catch (err){
+    renderError(err, fresh);
+  } finally {
+    setLoading(false);
+  }
+}
+function buildTermEpmc(){
+  const parts = [];
+  for (const chip of activeChips()){
+    const ors = chip.split(/\s+OR\s+/i).map(t => t.trim()).filter(Boolean).flatMap(t => {
+      const q = /^"(.*)"$/.exec(t);
+      const clean = (q ? q[1] : t).replace(/"/g,"");
+      if (!q && !/\s/.test(clean)) return [`TITLE:${clean}*`, `ABSTRACT:${clean}*`];
+      return [`TITLE:"${clean}"`, `ABSTRACT:"${clean}"`];
+    });
+    parts.push(`(${ors.join(" OR ")})`);
+  }
+  const PT = { meta:"meta-analysis", sysrev:"systematic review", rct:"randomized controlled trial",
+    trial:"clinical trial", obs:"observational study", case:"case reports" };
+  const fs = state.designs.map(k => `PUB_TYPE:"${PT[k]}"`);
+  if (fs.length) parts.push(fs.length > 1 ? `(${fs.join(" OR ")})` : fs[0]);
+  const yf = document.getElementById("yrFrom").value.trim();
+  const yt = document.getElementById("yrTo").value.trim();
+  if (/^\d{4}$/.test(yf) || /^\d{4}$/.test(yt))
+    parts.push(`PUB_YEAR:[${/^\d{4}$/.test(yf)?yf:"1800"} TO ${/^\d{4}$/.test(yt)?yt:"3000"}]`);
+  return parts.join(" AND ");
+}
+function buildTermOa(){
+  const q = activeChips().map(chip => {
+    const ors = chip.split(/\s+OR\s+/i).map(t => t.replace(/["*]/g, "").trim()).filter(Boolean)
+      .map(t => t.includes(" ") ? `"${t}"` : t);  // openalex has no wildcards; it stems natively
+    return ors.length > 1 ? `(${ors.join(" OR ")})` : ors[0];
+  }).join(" AND ");
+  const DK = { meta:'"meta-analysis"', sysrev:'"systematic review"', rct:'"randomized controlled trial"',
+    trial:'"clinical trial"', obs:'(cohort OR "cross-sectional" OR longitudinal OR "case-control" OR observational)',
+    case:'"case report"' };
+  const ds = state.designs.map(k => DK[k]);
+  return q + (ds.length ? " AND " + (ds.length > 1 ? `(${ds.join(" OR ")})` : ds[0]) : "");
+}
+function parseOa(d){
+  return (d.results || []).map(w => {
+    let abs = "";
+    if (w.abstract_inverted_index){
+      const words = [];
+      for (const [word, positions] of Object.entries(w.abstract_inverted_index))
+        for (const p of positions) words[p] = word;
+      abs = words.join(" ").replace(/\s+/g, " ").trim();
+    }
+    const pmid = (w.ids?.pmid || "").replace(/\D/g, "");
+    const oid = (w.id || "").split("/").pop();
+    return {
+      pmid,
+      title: w.display_name || "[no title]",
+      journal: w.primary_location?.source?.display_name || "",
+      year: String(w.publication_year || ""),
+      authors: (w.authorships || []).map(a => a.author?.display_name).filter(Boolean),
+      abstractParts: abs ? [{ label: "", text: abs }] : [],
+      pubTypes: [],
+      doi: (w.doi || "").replace("https://doi.org/", ""),
+      url: pmid ? `https://pubmed.ncbi.nlm.nih.gov/${pmid}/` : (w.doi || `https://openalex.org/${oid}`),
+      idLabel: pmid ? `pmid ${pmid}` : `openalex ${oid}`,
+    };
+  });
+}
+function buildTermWos(){
+  const q = activeChips().map(chip => {
+    const ors = chip.split(/\s+OR\s+/i).map(t => t.trim()).filter(Boolean).map(t => {
+      const q2 = /^"(.*)"$/.exec(t);
+      const clean = (q2 ? q2[1] : t).replace(/["]/g, "");
+      if (!q2 && !/\s/.test(clean) && !clean.endsWith("*")) return clean + "*";
+      return clean.includes(" ") || q2 ? `"${clean}"` : clean;
+    });
+    return ors.length > 1 ? `(${ors.join(" OR ")})` : ors[0];
+  }).join(" AND ");
+  const DK = { meta:'"meta-analysis"', sysrev:'"systematic review"', rct:'"randomized controlled trial"',
+    trial:'"clinical trial"', obs:'(cohort OR "cross-sectional" OR longitudinal OR "case-control" OR observational)',
+    case:'"case report"' };
+  const ds = state.designs.map(k => DK[k]);
+  let t = `TS=(${q}${ds.length ? " AND " + (ds.length > 1 ? `(${ds.join(" OR ")})` : ds[0]) : ""})`;
+  const yf = document.getElementById("yrFrom").value.trim();
+  const yt = document.getElementById("yrTo").value.trim();
+  if (/^\d{4}$/.test(yf) || /^\d{4}$/.test(yt))
+    t += ` AND PY=(${/^\d{4}$/.test(yf)?yf:"1800"}-${/^\d{4}$/.test(yt)?yt:"2100"})`;
+  return t;
+}
+function parseWos(d){
+  return (d.hits || []).map(h => {
+    const pmid = String(h.identifiers?.pmid || "").replace(/\D/g, "");
+    const doi = h.identifiers?.doi || "";
+    return {
+      pmid,
+      title: h.title || "[no title]",
+      journal: h.source?.sourceTitle || "",
+      year: String(h.source?.publishYear || ""),
+      authors: (h.names?.authors || []).map(a => a.displayName).filter(Boolean),
+      abstractParts: [],
+      pubTypes: h.types || [],
+      doi,
+      url: pmid ? `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`
+        : doi ? `https://doi.org/${doi}`
+        : `https://www.webofscience.com/wos/woscc/full-record/${h.uid}`,
+      idLabel: pmid ? `pmid ${pmid}` : `wos ${h.uid || ""}`,
+    };
+  });
+}
+async function hydrateAbstracts(arts){
+  const need = arts.filter(a => !a.abstractParts.length && a.doi);
+  if (!need.length) return;
+  try {
+    const d = await eFetchJSON("https://api.openalex.org/works?filter=" +
+      encodeURIComponent("doi:" + need.map(a => a.doi).join("|")) + "&per-page=" + Math.min(need.length, 50));
+    const byDoi = {};
+    for (const w of d.results || []){
+      if (!w.abstract_inverted_index) continue;
+      const words = [];
+      for (const [word, positions] of Object.entries(w.abstract_inverted_index))
+        for (const p of positions) words[p] = word;
+      byDoi[(w.doi || "").replace("https://doi.org/", "").toLowerCase()] =
+        words.join(" ").replace(/\s+/g, " ").trim();
+    }
+    for (const a of need){
+      const abs = byDoi[a.doi.toLowerCase()];
+      if (abs) a.abstractParts = [{ label: "", text: abs }];
+    }
+  } catch (e){ /* abstracts stay empty; the record still lists */ }
+}
+function parseEpmc(es){
+  return (es.resultList?.result || []).map(r => {
+    const textAbs = r.abstractText
+      ? new DOMParser().parseFromString(
+          r.abstractText.replace(/<(h\d|p|div|li)[^>]*>/gi, " $&").replace(/<\/(h\d|p|div|br|li)>/gi, "$& "), "text/html")
+          .body.textContent.replace(/\s+/g," ").trim()
+      : "";
+    const pmid = r.pmid || "";
+    return {
+      pmid,
+      title: r.title || "[no title]",
+      journal: r.journalInfo?.journal?.title || r.journalTitle || (r.source === "PPR" ? "preprint" : ""),
+      year: String(r.pubYear || ""),
+      authors: (r.authorString || "").replace(/\.\s*$/,"").split(", ").filter(Boolean),
+      abstractParts: textAbs ? [{ label:"", text:textAbs }] : [],
+      pubTypes: r.pubTypeList?.pubType || [],
+      doi: r.doi || "",
+      url: pmid ? `https://pubmed.ncbi.nlm.nih.gov/${pmid}/` : `https://europepmc.org/article/${r.source}/${r.id}`,
+      idLabel: pmid ? `pmid ${pmid}` : `${(r.source || "id").toLowerCase()} ${r.id}`,
+    };
+  });
+}
+function setLoading(on){
+  state.loading = on;
+  searchBtn.disabled = on;
+  searchBtn.textContent = on ? "searching…" : "search";
+  const lm = document.getElementById("loadMore");
+  if (lm){ lm.disabled = on; lm.textContent = on ? "loading…" : "load more"; }
+}
+
+/* ---------- parse ---------- */
+function parseArticles(xml){
+  return [...xml.querySelectorAll("PubmedArticle")].map(a => {
+    const q = sel => a.querySelector(sel);
+    const pmid = q("MedlineCitation > PMID")?.textContent || "";
+    const title = q("ArticleTitle")?.textContent?.trim() || "[no title]";
+    const journal = q("Journal > Title")?.textContent || q("ISOAbbreviation")?.textContent || "";
+    const year = q("JournalIssue PubDate Year")?.textContent
+      || (q("JournalIssue PubDate MedlineDate")?.textContent || "").slice(0,4) || "";
+    const authors = [...a.querySelectorAll("AuthorList > Author")].map(au =>
+      au.querySelector("LastName")?.textContent || au.querySelector("CollectiveName")?.textContent || null
+    ).filter(Boolean);
+    const abstractParts = [...a.querySelectorAll("Abstract > AbstractText")].map(t => ({
+      label: t.getAttribute("Label") || "",
+      text: t.textContent.trim(),
+    }));
+    const pubTypes = [...a.querySelectorAll("PublicationType")].map(t => t.textContent);
+    const doi = [...a.querySelectorAll("ArticleId")].find(x => x.getAttribute("IdType")==="doi")?.textContent || "";
+    return { pmid, title, journal, year, authors, abstractParts, pubTypes, doi,
+      url: `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`, idLabel: `pmid ${pmid}` };
+  });
+}
+
+/* ---------- classify (PubMed publication types first, abstract heuristics second) ---------- */
+function classify(art){
+  const pts = art.pubTypes;
+  const has = s => pts.some(p => p === s);
+  const hasStart = s => pts.some(p => p.startsWith(s));
+  let key = null;
+  if (has("Meta-Analysis")) key = "meta";
+  else if (has("Systematic Review")) key = "sysrev";
+  else if (has("Randomized Controlled Trial")) key = "rct";
+  else if (hasStart("Clinical Trial")) key = "trial";
+  else if (has("Observational Study")) key = "obs";
+  else if (has("Case Reports")) key = "case";
+  else if (has("Review")) key = "review";
+  const text = (art.title+" "+art.abstractParts.map(p=>p.text).join(" ")).toLowerCase();
+  const tags = [];
+  const T = (re, tag) => { if (re.test(text)) tags.push(tag); };
+  T(/cross[- ]sectional/, "cross-sectional");
+  T(/longitudinal|follow[- ]up study|prospective/, "longitudinal");
+  T(/\bcohort\b/, "cohort");
+  T(/case[- ]control/, "case-control");
+  T(/\btwin(s)? (study|design|sample|pairs)\b|\bmonozygotic\b/, "twin study");
+  T(/ecological momentary|experience sampling|daily diary/, "ema/diary");
+  T(/double[- ]blind/, "double-blind");
+  T(/random(ized|ised|ly assigned)/, "randomized");
+  T(/qualitative (study|interviews|analysis)|thematic analysis/, "qualitative");
+  T(/pre[- ]?registered|preregistration/, "preregistered");
+  T(/meta[- ]anal/, "meta-analytic");
+  if (!key){
+    if (tags.includes("meta-analytic")) key = "meta";
+    else if (tags.includes("randomized") || tags.includes("double-blind")) key = "trial";
+    else if (["cross-sectional","longitudinal","cohort","case-control","twin study","ema/diary"].some(t=>tags.includes(t))) key = "obs";
+    else key = "other";
+  }
+  const primary = DESIGN_NAME[key];
+  return { key, primary, tags: tags.filter(t =>
+    t !== primary && !(t === "meta-analytic" && (key === "meta" || key === "sysrev"))
+    && !(t === "randomized" && key === "rct")) };
+}
+
+/* ---------- numerics ---------- */
+const NUM = "\\d{1,3}(?:[ ,\\u00A0\\u202F]\\d{3})*|\\d+";
+const WNUM = {one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,
+  eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19,
+  twenty:20,thirty:30,forty:40,fifty:50,sixty:60,seventy:70,eighty:80,ninety:90};
+const wordNumRe = (() => {
+  const unit = "(?:one|two|three|four|five|six|seven|eight|nine)";
+  const teen = "(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)";
+  const tens = "(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)";
+  const small = `(?:${tens}(?:[-\\s]${unit})?|${teen}|${unit})`;
+  return new RegExp(`\\b(${small}\\s+hundred(?:\\s+(?:and\\s+)?${small})?|${tens}(?:[-\\s]${unit})?|${teen})\\b`, "gi");
+})();
+function wordsToDigits(t){
+  return t.replace(wordNumRe, m => {
+    let val = 0;
+    for (const w of m.toLowerCase().split(/[-\s]+/)){
+      if (w === "and") continue;
+      if (w === "hundred") val *= 100;
+      else val += WNUM[w] || 0;
+    }
+    return val >= 13 ? String(val) : m;
+  });
+}
+function extractNums(art){
+  const text = wordsToDigits(art.abstractParts.map(p=>p.text).join(" "));
+  const out = { n:null, k:null, effects:[], rel:[], other:[] };
+  const NOUNS = "participants|patients|cases|adults|adolescents|children|students|undergraduates|respondents|subjects|individuals|people|persons|women|men|males|females|couples|dyads|families|parents|mothers|fathers|infants|toddlers|youths?|teenagers|twins|outpatients|inpatients|veterans|employees|workers|nurses|teachers|caregivers|athletes|clients|users|controls|volunteers|graders";
+  const NOTK = "(?!\\s*(?:studies|trials|articles|papers|reports|records|databases|effect))";
+  const ADJ = "(?:(?!of\\b|in\\b|with\\b|and\\b|or\\b|the\\b|to\\b|for\\b|from\\b|per\\b|a\\b|an\\b|were\\b|was\\b)[A-Za-z][\\w-]*\\s+){0,2}";
+  let m = text.match(new RegExp(`\\b[Nn]\\s?=\\s?(${NUM})`));
+  if (!m) m = text.match(new RegExp(`\\b(?:total |final |analytic )?sample (?:size )?of (${NUM})${NOTK}`, "i"));
+  if (!m) m = text.match(new RegExp(`\\b(?:participants|the sample|patients|respondents|subjects)\\s+(?:were|was|comprised|included|consisted of)\\s+(?:a total of\\s+)?(${NUM})`, "i"));
+  if (!m) m = text.match(new RegExp(`\\b(${NUM})\\s+${ADJ}(?:${NOUNS})\\b`, "i"));
+  if (!m) m = text.match(new RegExp(`\\b(?:recruited|enrolled|surveyed|interviewed|randomi[sz]ed)\\s+(?:a total of\\s+)?(${NUM})${NOTK}`, "i"));
+  if (!m) m = text.match(new RegExp(`\\btotal of (${NUM})\\s+${ADJ}(?:${NOUNS})\\b`, "i"));
+  if (m) out.n = parseInt(m[1].replace(/\D/g,""), 10);
+  const k = text.match(new RegExp(`\\b(${NUM})\\s+(?:studies|trials|articles|effect sizes|samples|datasets)\\b`, "i"));
+  if (k) out.k = parseInt(k[1].replace(/\D/g,""), 10);
+  const effRe = /\b(?:Cohen'?s\s+)?(?:d|g|r|R2|R²|β|OR|RR|HR|η2|η²)\s?=\s?[-−–]?\d*\.\d+/g;
+  const pRe = /\bp\s?(?:=|<|>|≤|≥)\s?0?\.\d+/gi;
+  const testRe = /\b(?:[tFz]\s?\(\d+(?:\.\d+)?(?:,\s?\d+(?:\.\d+)?)?\)|χ2?²?\s?\(?\d*\)?)\s?=\s?[-−]?\d+\.?\d*/g;
+  const ciRe = /95%\s?CI[ ,:=]*\[?[-−]?\d*\.?\d+(?:\s?(?:[-–,;]|to)\s?[-−]?\d*\.?\d+)\]?/gi;
+  const pctRe = /\d+\.?\d*\s?%\s?(?:vs\.?|versus|compared (?:to|with))\s?\d+\.?\d*\s?%/gi;
+  const chipRes = activeChips().map(chip =>
+    new RegExp(`(?<!\\w)(?:${chip.split(/\s+OR\s+/i).map(t=>t.trim()).filter(Boolean).map(termPattern).join("|")})`, "i"));
+  const seen = new Set();
+  for (const sent of text.split(/(?<=[.!?])\s+/)){
+    const stats = [...(sent.match(effRe) || []), ...(sent.match(testRe) || []),
+        ...(sent.match(ciRe) || []), ...(sent.match(pctRe) || []), ...(sent.match(pRe) || [])]
+      .map(x => x.replace(/\s+/g," ").trim()).filter(x => !seen.has(x));
+    if (!stats.length) continue;
+    stats.forEach(x => seen.add(x));
+    const bucket = chipRes.length && chipRes.every(re => re.test(sent)) ? out.rel : out.other;
+    bucket.push(stats.join(", "));
+  }
+  out.rel = out.rel.slice(0, 4);
+  out.other = out.other.slice(0, 4);
+  out.effects = [...new Set(text.match(effRe) || [])].map(x => x.replace(/\s+/g," ").trim()).slice(0, 3);
+  return out;
+}
+
+const ANALYSES = [
+  [/random[- ]effects|fixed[- ]effects?\b/, "pooled effects"],
+  [/logistic regression/, "logistic regression"],
+  [/(linear|hierarchical|multiple) regression|\bregressions?\b/, "regression"],
+  [/structural equation|\bsem\b/, "sem"],
+  [/mediation/, "mediation"],
+  [/moderation|moderator analys/, "moderation"],
+  [/multilevel|mixed[- ]effects? model|linear mixed/, "multilevel model"],
+  [/factor analys/, "factor analysis"],
+  [/latent (class|profile)/, "latent class/profile"],
+  [/network analys/, "network analysis"],
+  [/\banova\b|analysis of variance/, "anova"],
+  [/\bt[- ]tests?\b/, "t-test"],
+  [/chi[- ]squared?/, "chi-square"],
+  [/correlation/, "correlation"],
+  [/machine learning|random forest|neural network/, "machine learning"],
+  [/\bcox\b|survival analys/, "survival analysis"],
+  [/thematic analysis/, "thematic analysis"],
+];
+function extractAnalyses(art){
+  const text = (art.title+" "+art.abstractParts.map(p=>p.text).join(" ")).toLowerCase();
+  return ANALYSES.filter(([re]) => re.test(text)).map(([,label]) => label).slice(0,3);
+}
+function matchedVariables(art){
+  const text = art.title + " " + art.abstractParts.map(p => p.text).join(" ");
+  const out = [];
+  activeChips().forEach((chip, i) => {
+    const hits = chip.split(/\s+OR\s+/i).map(t => t.trim()).filter(Boolean)
+      .filter(t => new RegExp(`(?<!\\w)${termPattern(t)}`, "i").test(text));
+    if (hits.length) out.push({ text: hits[0].toLowerCase().replace(/\*/g, ""), cat: i });
+  });
+  return out;
+}
+
+/* ---------- highlight ---------- */
+function termPattern(t){
+  t = t.trim();
+  const quoted = /^"(.*)"$/.exec(t);
+  if (quoted) t = quoted[1];
+  const words = escapeHTML(t)
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\\\*/g, "\\w*")
+    .split(/\s+/);
+  if (!quoted && words.length === 1 && !words[0].endsWith("\\w*")) return words[0] + "\\w*";
+  return words
+    .map(w => (quoted || w.endsWith("\\w*")) ? w : w + "(?:e?s)?")
+    .join("[\\s\\-\u2013/]+");
+}
+function isRelevant(art){
+  const hasAbs = art.abstractParts.length > 0;
+  const hay = hasAbs ? art.title + " " + art.abstractParts.map(p => p.text).join(" ") : art.title;
+  return activeChips().every(chip =>
+    chip.split(/\s+OR\s+/i).map(t => t.trim()).filter(Boolean)
+      .some(t => new RegExp(`(?<!\\w)${termPattern(t)}`, "i").test(hay)));
+}
+function highlightTerms(escapedText){
+  const terms = activeChips().flatMap(c => c.split(/\s+OR\s+/i)).map(t=>t.trim()).filter(Boolean)
+    .sort((a,b)=>b.length-a.length);
+  if (!terms.length) return escapedText;
+  const alts = terms.map(termPattern);
+  return escapedText.replace(new RegExp(`(?<![\\w>&#])(${alts.join("|")})`,"gi"), "<mark>$1</mark>");
+}
+function escapeHTML(s){
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+/* ---------- render ---------- */
+function clearResults(){ resultsEl.innerHTML = ""; }
+function renderQtrans(){
+  const div = document.createElement("div");
+  div.className = "state";
+  div.innerHTML = `<details class="qtrans"><summary>how the query ran</summary><code>${escapeHTML(state.translation)}</code></details>`;
+  resultsEl.appendChild(div);
+  const rows = document.createElement("div"); rows.id = "rows";
+  resultsEl.appendChild(rows);
+}
+function renderStudies(arts){
+  const rows = document.getElementById("rows");
+  const pageEntries = [];
+  arts.forEach(art => {
+    const cls = classify(art);
+    const nums = extractNums(art);
+    state.loadedNs.push(nums.n);
+    const row = document.createElement("div");
+    row.className = "study-row";
+    const box = document.createElement("article");
+    box.className = "study";
+    const aTxt = art.abstractParts.length
+      ? art.abstractParts.map(p =>
+          (p.label ? `<span class="slabel2">${escapeHTML(p.label.toLowerCase())}</span> ` : "") + highlightCats(escapeHTML(p.text))
+        ).join("<br>")
+      : `<span class="no-abstract">no abstract on the pubmed record.</span>`;
+    const byAuth = art.authors.length
+      ? escapeHTML(art.authors.slice(0,3).join(", ")) + (art.authors.length>3 ? " et al." : "")
+      : "";
+    const numbits = [
+      art.year ? `<span><b>${art.year}</b></span>` : "",
+      nums.n != null ? `<span>N=<b>${nums.n.toLocaleString("en-US")}</b></span>` : "",
+      nums.k != null ? `<span>k=<b>${nums.k.toLocaleString("en-US")}</b></span>` : "",
+      ...nums.effects.map(e => `<span><b>${escapeHTML(e)}</b></span>`),
+      `<span>${cls.primary}</span>`,
+      ...cls.tags.map(t => `<span>${escapeHTML(t)}</span>`),
+    ].filter(Boolean).join("");
+    box.innerHTML = `
+      <h3><a href="${art.url}" target="_blank" rel="noopener">${highlightCats(escapeHTML(art.title))}</a></h3>
+      <div class="byline">${byAuth}${byAuth&&art.journal?" · ":""}${escapeHTML(art.journal)} · ${escapeHTML(art.idLabel)}</div>
+      <div class="numrow">${numbits}</div>
+      <div class="abstract">${aTxt}</div>
+      <div class="row-actions">
+        ${art.abstractParts.length ? `<button type="button" class="expander" aria-expanded="false">full abstract</button>` : ""}
+        <a href="${art.url}" target="_blank" rel="noopener">${art.pmid ? "pubmed" : art.idLabel.startsWith("openalex") ? "openalex" : art.idLabel.startsWith("wos") ? "wos" : "europe pmc"}</a>
+        ${art.doi ? `<a href="https://doi.org/${encodeURIComponent(art.doi)}" target="_blank" rel="noopener">doi</a>` : ""}
+        <label class="tog pick"><input type="checkbox" class="pickCb"> select</label>
+      </div>`;
+    const ex = box.querySelector(".expander");
+    if (ex) ex.addEventListener("click", () => {
+      const ab = box.querySelector(".abstract");
+      const open = ab.classList.toggle("open");
+      ex.setAttribute("aria-expanded", String(open));
+      ex.textContent = open ? "collapse" : "full abstract";
+    });
+    const databox = document.createElement("aside");
+    databox.className = "databox";
+    const entry = {
+      art,
+      year: art.year,
+      vars: matchedVariables(art),
+      design: [cls.primary, ...cls.tags].join(", "),
+      analyses: extractAnalyses(art),
+      findings: nums.rel,
+      otherFindings: nums.other,
+      n: nums.n,
+      nsIdx: state.loadedNs.length - 1,
+      el: databox,
+    };
+    databox.innerHTML = databoxHTML(entry);
+    const pickCb = box.querySelector(".pickCb");
+    entry.pickCb = pickCb;
+    pickCb.checked = state.selected.has(art.url);
+    syncPick(entry);
+    pickCb.addEventListener("change", () => {
+      if (pickCb.checked) state.selected.set(art.url, entry);
+      else state.selected.delete(art.url);
+      renderPicks();
+    });
+    row.append(box, databox);
+    rows.appendChild(row);
+    pageEntries.push(entry);
+  });
+  runClaudePass(pageEntries);
+}
+// Only studies with a usable effect size can be selected for meta-analysis.
+function syncPick(e){
+  const cb = e.pickCb;
+  if (!cb) return;
+  const ok = !!parseEffect(e);
+  cb.disabled = !ok;
+  cb.closest("label").title = ok ? "" : "can\u2019t be meta-analysed: no usable effect size (r + N, OR/RR/HR + CI, or d/g)";
+  if (!ok && state.selected.has(e.art.url)){
+    cb.checked = false;
+    state.selected.delete(e.art.url);
+    renderPicks();
+  }
+}
+function renderPicks(){
+  const n = state.selected.size;
+  document.getElementById("pickCount").textContent = `${n} stud${n === 1 ? "y" : "ies"}`;
+  document.getElementById("exportBtn").style.display = n ? "" : "none";
+  document.getElementById("clearPicksBtn").style.display = n ? "" : "none";
+  document.getElementById("metaBtn").style.display = n >= 2 ? "" : "none";
+}
+/* ---------- quick random-effects meta-analysis of selected studies ---------- */
+function parseEffect(e){
+  const txt = [...(e.findings || []), ...(e.otherFindings || [])].join(" ");
+  let m = txt.match(/\b(OR|RR|HR)\s*=?\s*([\d.]+)[^\])]*?95%\s*CI[\s,:=\[]*([\d.]+)\s*(?:[-\u2013,]|to)\s*([\d.]+)/i);
+  if (m){
+    const y = Math.log(+m[2]);
+    const v = Math.pow((Math.log(+m[4]) - Math.log(+m[3])) / 3.92, 2);
+    if (isFinite(y) && v > 0) return { measure: m[1].toUpperCase(), kind: "log", y, v };
+  }
+  m = txt.match(/\b[rR]\s*=\s*(-?0?\.\d+)/);
+  if (m && e.n > 3){
+    const r = Math.max(-0.99, Math.min(0.99, +m[1]));
+    return { measure: "r", kind: "z", y: Math.atanh(r), v: 1 / (e.n - 3) };
+  }
+  m = txt.match(/\b([dg])\s*=\s*(-?[\d.]+)/);
+  if (m){
+    const d = +m[2];
+    const ci = txt.match(/95%\s*CI[\s,:=\[]*(-?[\d.]+)\s*(?:[-\u2013,]|to)\s*(-?[\d.]+)/);
+    let v = null;
+    if (ci) v = Math.pow(((+ci[2]) - (+ci[1])) / 3.92, 2);
+    else if (e.n > 0) v = 4 / e.n + d * d / (2 * e.n);
+    if (v > 0) return { measure: m[1], kind: "raw", y: d, v };
+  }
+  return null;
+}
+function normUpper(z){
+  const t = 1 / (1 + 0.2316419 * z);
+  return 0.3989423 * Math.exp(-z * z / 2) *
+    t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+}
+function fmtP(p){ return p < 0.001 ? "p < .001" : "p = " + p.toFixed(3).replace(/^0/, ""); }
+function runMeta(){
+  const entries = [...state.selected.values()];
+  const effs = []; let skipped = 0;
+  for (const en of entries){
+    const p = parseEffect(en);
+    if (p){
+      p.label = ((en.art.authors[0] || "?") + " " + (en.year || "")).trim();
+      effs.push(p);
+    } else skipped++;
+  }
+  document.getElementById("metaPanel")?.remove();
+  const panel = document.createElement("div");
+  panel.className = "metapanel"; panel.id = "metaPanel";
+  if (effs.length < 2){
+    panel.innerHTML = `<button class="mclose" type="button">×</button><b>meta-analysis</b><div>need at least 2 selected studies with a usable effect size (r + N, OR/RR/HR + CI, or d/g). ${effs.length} usable, ${skipped} without — filling in findings with the API (and full text) captures more.</div>`;
+  } else {
+    const groups = {};
+    effs.forEach(x => { (groups[x.kind + "|" + x.measure] ||= []).push(x); });
+    const biggest = Object.values(groups).sort((a, b) => b.length - a.length)[0];
+    let pool, kind, measure, converted = false;
+    if (biggest.length === effs.length){
+      pool = biggest; kind = biggest[0].kind; measure = biggest[0].measure;
+    } else {
+      converted = true; kind = "raw"; measure = "SMD (d)";
+      pool = effs.map(x => {
+        if (x.kind === "raw") return { ...x };
+        if (x.kind === "z"){
+          const r = Math.tanh(x.y);
+          return { ...x, y: 2 * r / Math.sqrt(1 - r * r), v: 4 * x.v / (1 - r * r) };
+        }
+        return { ...x, y: x.y * Math.sqrt(3) / Math.PI, v: x.v * 3 / (Math.PI * Math.PI) };
+      });
+    }
+    const back = x => kind === "log" ? Math.exp(x) : kind === "z" ? Math.tanh(x) : x;
+    const wF = pool.map(x => 1 / x.v);
+    const sw = wF.reduce((a, b) => a + b, 0), sw2 = wF.reduce((a, b) => a + b * b, 0);
+    const yF = pool.reduce((a, x, i) => a + x.y * wF[i], 0) / sw;
+    const Q = pool.reduce((a, x, i) => a + wF[i] * Math.pow(x.y - yF, 2), 0);
+    const df = pool.length - 1;
+    const tau2 = Math.max(0, (Q - df) / (sw - sw2 / sw));
+    const wR = pool.map(x => 1 / (x.v + tau2));
+    const swR = wR.reduce((a, b) => a + b, 0);
+    const yR = pool.reduce((a, x, i) => a + x.y * wR[i], 0) / swR;
+    const se = Math.sqrt(1 / swR);
+    const z = Math.abs(yR / se);
+    const p = 2 * normUpper(z);
+    const i2 = Q > 0 ? Math.max(0, (Q - df) / Q) : 0;
+    const rows = pool.map(x => ({ label: x.label + (converted && x.measure !== "d" && x.measure !== "g" ? ` (${x.measure})` : ""),
+      est: back(x.y), lo: back(x.y - 1.96 * Math.sqrt(x.v)), hi: back(x.y + 1.96 * Math.sqrt(x.v)) }));
+    const pooled = { est: back(yR), lo: back(yR - 1.96 * se), hi: back(yR + 1.96 * se) };
+    const all = [...rows, pooled];
+    const lo = Math.min(...all.map(r => r.lo)), hi = Math.max(...all.map(r => r.hi));
+    const W = 26;
+    const pos = x => Math.max(0, Math.min(W - 1, Math.round((x - lo) / (hi - lo || 1) * (W - 1))));
+    const ref = kind === "log" ? 1 : 0;
+    const line = (r, mark) => {
+      const a = Array(W).fill(" ");
+      for (let j = pos(r.lo); j <= pos(r.hi); j++) a[j] = "\u2500";
+      if (ref >= lo && ref <= hi && a[pos(ref)] === " ") a[pos(ref)] = "\u2502";
+      a[pos(r.est)] = mark;
+      return a.join("");
+    };
+    const fmt = x => (Math.abs(x) < 10 ? x.toFixed(2) : x.toFixed(1));
+    const labW = Math.max(...rows.map(r => r.label.length), 6);
+    const forest = rows.map(r =>
+      `${r.label.padEnd(labW)}  ${line(r, "\u25a0")}  ${fmt(r.est)} [${fmt(r.lo)}, ${fmt(r.hi)}]`).join("\n") +
+      `\n${"pooled".padEnd(labW)}  ${line(pooled, "\u25c6")}  ${fmt(pooled.est)} [${fmt(pooled.lo)}, ${fmt(pooled.hi)}]`;
+    panel.innerHTML = `<button class="mclose" type="button">×</button><b>meta-analysis</b> (random effects)
+      <div>${escapeHTML(measure)}: k = ${pool.length}${skipped ? ` (${skipped} selected without a usable effect)` : ""}${converted ? " \u00b7 mixed measures converted to d" : ""} \u00b7 pooled = ${fmt(pooled.est)} [${fmt(pooled.lo)}, ${fmt(pooled.hi)}], ${fmtP(p)}, I\u00b2 = ${(i2 * 100).toFixed(0)}%</div>
+      <pre>${escapeHTML(forest)}</pre>
+      <div style="color:#555">from abstract-reported effects \u2014 verify against full texts before use.</div>`;
+  }
+  panel.querySelector(".mclose").addEventListener("click", () => panel.remove());
+  resultsEl.prepend(panel);
+  panel.scrollIntoView({ block: "nearest" });
+}
+document.getElementById("metaBtn").addEventListener("click", runMeta);
+function exportCsv(){
+  const rows = [["title","authors","journal","year","id","doi","design","variables","analysis","findings","other_findings","N"]];
+  for (const e of state.selected.values()){
+    rows.push([e.art.title, e.art.authors.join("; "), e.art.journal, e.year, e.art.idLabel,
+      e.art.doi, e.design, e.vars.map(v => v.text).join("; "), e.analyses.join("; "),
+      e.findings.join("; "),
+      (e.otherFindings || []).join("; "),
+      e.n != null ? e.n : ""]);
+  }
+  const csv = rows.map(r => r.map(c => `"${String(c ?? "").replace(/"/g,'""')}"`).join(",")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type:"text/csv" }));
+  a.download = "cut_selected.csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+document.getElementById("exportBtn").addEventListener("click", exportCsv);
+document.getElementById("clearPicksBtn").addEventListener("click", () => {
+  state.selected.clear();
+  document.querySelectorAll(".pickCb").forEach(cb => { cb.checked = false; });
+  renderPicks();
+});
+function highlightCats(escaped, aliases){
+  let html = escaped;
+  activeChips().forEach((chip, i) => {
+    const variants = [...chip.split(/\s+OR\s+/i).map(t => t.trim()), ...((aliases && aliases[i]) || [])]
+      .filter(Boolean).sort((a,b) => b.length - a.length);
+    if (!variants.length) return;
+    const re = new RegExp(`(?<![\\w>&#])(${variants.map(termPattern).join("|")})`, "gi");
+    html = html.replace(re, `<mark style="background:${chipColor(i)}">$1</mark>`);
+  });
+  return html;
+}
+// Bold every number in an already-escaped/highlighted findings line; skips text inside tags.
+function boldNums(html){
+  return html.replace(/(<[^>]*>)|([\u2212-]?(?:\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)%?)/g, (m, tag, num) => tag ? tag : `<b>${num}</b>`);
+}
+function databoxHTML(e){
+  const vars = e.vars.map(v =>
+    `<span class="mini"${v.cat >= 0 ? ` style="background:${chipColor(v.cat)};color:#000;border-color:#000"` : ""}>${escapeHTML(v.text)}</span>`).join("");
+  const findings = e.findings.length
+    ? e.findings.map(f => `<div class="fline">${boldNums(highlightCats(escapeHTML(f), e.aliases))}</div>`).join("")
+    : (e.pending ? `<span class="pend">...</span>` : "\u2014");
+  const other = (e.otherFindings || []).map(f => `<div class="fline">${boldNums(highlightCats(escapeHTML(f), e.aliases))}</div>`).join("");
+  return `<div class="drow"><b>year</b> ${e.year ? escapeHTML(e.year) : "\u2014"}</div>` +
+    `<div class="drow"><b>variables</b> ${e.vars.length ? vars : "\u2014"}</div>` +
+    `<div class="drow"><b>design</b> ${escapeHTML(e.design) || "\u2014"}</div>` +
+    `<div class="dhead">analysis</div><div class="dval">${e.analyses.length ? escapeHTML(e.analyses.join(", ")) : "\u2014"}</div>` +
+    (e.testsLink === false ? `<div class="drow"><b>link</b> relationship not directly tested</div>` : "") +
+    (e.testsLink === true ? `<div class="drow"><b>link</b> directly tested</div>` : "") +
+    `<div class="dhead">findings</div><div class="findbox">${findings}</div>` +
+    `<div class="drow"><b>N</b> ${e.n != null ? Number(e.n).toLocaleString("en-US") : "\u2014"}</div>` +
+    (other ? `<details class="ofind"><summary>other findings</summary>${other}</details>` : "");
+}
+
+/* ---------- claude pass ---------- */
+function claudeStatus(msg, isErr){
+  let el = document.getElementById("claudeStatus");
+  if (!msg){ el?.remove(); return; }
+  if (!el){
+    el = document.createElement("div"); el.id = "claudeStatus";
+    resultsEl.prepend(el);
+  }
+  el.innerHTML = isErr ? `<span class="err">${escapeHTML(msg)}</span>` : escapeHTML(msg);
+}
+async function claudeCall(system, userText){
+  const key = apiKeyInput.value.trim();
+  if (!key) throw new Error("add an api key first");
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": key,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: document.getElementById("modelSel").value,
+      max_tokens: 6000,
+      system,
+      messages: [{ role: "user", content: userText }],
+    }),
+  });
+  if (!r.ok){
+    const err = await r.json().catch(() => null);
+    throw new Error(err?.error?.message || `api returned ${r.status}`);
+  }
+  const data = await r.json();
+  if (data.stop_reason === "refusal") throw new Error("model declined this abstract");
+  const txt = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+  const m = txt.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error("no json in model reply");
+  return JSON.parse(m[0]);
+}
+function extractSystem(){
+  return `Extract structured data from the psychology study text. The user's search variables are: ${JSON.stringify(activeChips())}. Reply with ONLY a JSON object:
+{"variables": [{"term": string (variable/construct actually studied, lowercase, short), "category": string (which of the user's search variables it belongs under, copied verbatim from the list above, or "other")}] (max 6; assign a category ONLY if the study variable IS that construct or a direct subtype/measure of it — a related-but-distinct construct is "other", e.g. pornography use is NOT paraphilia, anxiety is NOT depression),
+"design": string (study design, short, e.g. "rct", "cross-sectional observational", "meta-analysis"),
+"analysis": string[] (statistical analyses used, short names),
+"findings": string[] (max 4; each is ONE simple plain sentence: subject, relationship, object, then ALL reported stats in parentheses at the end — e.g. "Death anxiety positively correlated with OCD severity (r = .69, p = .005)" or "Mindfulness reduced anxiety vs waitlist (d = 0.63, 95% CI 0.42-0.84, p < .001)". Use percentages or descriptive numbers when no test statistics exist, e.g. "(25.8% vs 18%)"; omit the parentheses only when the text gives no numbers at all. STRICT: only findings about the user's search variables — when they searched several variables, the finding must concern the relationship AMONG those variables),
+"other_findings": string[] (max 4, same one-sentence format, every other key finding, including ones pairing a searched variable with non-searched variables),
+"aliases": object (for EACH of the user's search variables — keys copied verbatim from the list above — up to 6 exact words/phrases the text uses to refer to THAT SAME construct, verbatim as they appear, e.g. "sexual offenders", "SOs"; never map a related-but-distinct construct as an alias),
+"tests_link": boolean or null (when the user searched 2+ variables: does the study DIRECTLY examine the relationship among them? false if they are merely both measured or mentioned; null for single-variable searches),
+"n": number or null (the size of the ANALYSED sample that the findings refer to — not the screened, invited, or recruited total; sum analysed subgroups; null if not stated). CONSISTENCY: if any finding mentions an n, "n" must agree with it}
+No prose, no markdown.`;
+}
+function claudeGap(e){ return e.n == null || !e.findings.length || !e.analyses.length; }
+async function runClaudePass(entries){
+  if (state.claudeMode === "off") return;
+  const targets = state.claudeMode === "all" ? [...entries] : entries.filter(claudeGap);
+  if (!targets.length) return;
+  targets.forEach(e => { e.pending = true; e.el.innerHTML = databoxHTML(e); });
+  claudeStatus(`claude: reading ${targets.length} abstract${targets.length === 1 ? "" : "s"}…`);
+  let failed = null, errCount = 0, lastErr = "";
+  const queue = [...targets];
+  await Promise.all(Array.from({ length: 3 }, async () => {
+    while (queue.length && !failed){
+      const e = queue.shift();
+      try {
+        let bodyText = `Title: ${e.art.title}\n\nAbstract: ${e.art.abstractParts.map(p => (p.label ? p.label + ": " : "") + p.text).join("\n")}`;
+        if (document.getElementById("fullText").checked){
+          const ft = await getFullText(e.art);
+          if (ft) bodyText = `Title: ${e.art.title}\n\nFull text:\n${ft}`;
+        }
+        const ex = await claudeCall(extractSystem(), bodyText);
+        if (Array.isArray(ex.variables) && ex.variables.length){
+          e.vars = ex.variables.slice(0, 6).map(v => {
+            if (typeof v === "string") return { text: v, cat: -1 };
+            const cat = activeChips().findIndex(c => c.toLowerCase() === String(v.category || "").toLowerCase());
+            return { text: String(v.term ?? ""), cat };
+          }).filter(v => v.text);
+        }
+        if (ex.aliases && typeof ex.aliases === "object"){
+          e.aliases = {};
+          for (const [cat, arr] of Object.entries(ex.aliases)){
+            const idx = activeChips().findIndex(c => c.toLowerCase() === String(cat).toLowerCase());
+            if (idx >= 0 && Array.isArray(arr)) e.aliases[idx] = arr.map(String).filter(Boolean).slice(0, 6);
+          }
+        }
+        if (ex.design) e.design = String(ex.design);
+        if (typeof ex.tests_link === "boolean") e.testsLink = ex.tests_link;
+        if (Array.isArray(ex.analysis) && ex.analysis.length) e.analyses = ex.analysis.map(String);
+        const normF = arr => arr.slice(0, 4).map(f =>
+          typeof f === "string" ? f
+          : [f.stat, f.context ? `(${f.context})` : ""].filter(Boolean).join(" ")
+        ).map(String).filter(Boolean);
+        if (Array.isArray(ex.findings)) e.findings = normF(ex.findings);
+        if (Array.isArray(ex.other_findings)) e.otherFindings = normF(ex.other_findings);
+        if (typeof ex.n === "number" && ex.n > 0){
+          e.n = ex.n;
+          state.loadedNs[e.nsIdx] = ex.n;
+        }
+        e.pending = false;
+        e.el.innerHTML = databoxHTML(e);
+        syncPick(e);
+      } catch (err){
+        if (/api key|authentication|unauthorized|credit|billing/i.test(String(err.message))){
+          failed = err.message;
+          queue.length = 0;
+        } else {
+          errCount++; lastErr = err.message;
+          e.pending = false; e.el.innerHTML = databoxHTML(e);
+        }
+      }
+    }
+  }));
+  targets.forEach(e => {
+    if (e.pending){ e.pending = false; e.el.innerHTML = databoxHTML(e); }
+  });
+  renderNums();
+  claudeStatus(failed ? `claude: ${failed}`
+    : errCount ? `API: ${errCount} abstract${errCount > 1 ? "s" : ""} failed (${lastErr})` : "",
+    !!(failed || errCount));
+}
+const ftCache = new Map();
+async function getFullText(art){
+  if (!art.pmid) return null;
+  if (ftCache.has(art.pmid)) return ftCache.get(art.pmid);
+  let out = null;
+  try {
+    const es = await eFetchJSON(`https://www.ebi.ac.uk/europepmc/webservices/rest/search` +
+      `?query=${encodeURIComponent(`EXT_ID:${art.pmid} AND SRC:MED`)}&format=json&resultType=core&pageSize=1`);
+    const r = es.resultList?.result?.[0];
+    if (r?.pmcid && r?.isOpenAccess === "Y"){
+      const resp = await fetch(`https://www.ebi.ac.uk/europepmc/webservices/rest/${r.pmcid}/fullTextXML`);
+      if (resp.ok){
+        const xml = new DOMParser().parseFromString(await resp.text(), "text/xml");
+        const body = xml.querySelector("body");
+        if (body) out = body.textContent.replace(/\s+/g, " ").trim().slice(0, 60000);
+      }
+    }
+  } catch (e){ /* fall back to abstract */ }
+  ftCache.set(art.pmid, out);
+  return out;
+}
+
+/* ---------- related terms ---------- */
+// Find the suggestions for a search term in the model's reply, tolerating
+// case differences, a reply keyed on the first OR variant, or a bare array.
+function lookupSuggs(ex, term, pos){
+  if (Array.isArray(ex)) return Array.isArray(ex[pos]) ? ex[pos] : null;
+  if (!ex || typeof ex !== "object") return null;
+  const first = term.split(/\s+OR\s+/i)[0].trim().toLowerCase();
+  const want = [term.toLowerCase(), first];
+  for (const k of Object.keys(ex)){
+    if (want.includes(k.trim().toLowerCase())) return Array.isArray(ex[k]) ? ex[k] : null;
+  }
+  return null;
+}
+// Fetch related terms for the given head terms and attach them to their chips,
+// all ticked. Resolves to the number of terms added.
+async function suggestTerms(heads){
+  let added = 0;
+  try {
+    const ex = await claudeCall(
+      `The user searches psychology literature. For each search term, suggest up to 4 related terms a relevant paper might use instead (synonyms, specific instances, formal names) \u2014 same construct only, lowercase. Reply with ONLY a JSON object mapping each original term to an array of suggestion strings. No prose.`,
+      JSON.stringify(heads));
+    heads.forEach((h, pos) => {
+      const i = state.chips.findIndex(c => chipHead(c) === h);
+      if (i < 0) return;
+      const suggs = lookupSuggs(ex, h, pos);
+      if (!Array.isArray(suggs)) return;
+      const have = splitChip(state.chips[i]).map(v => v.replace(/^-/, "").toLowerCase());
+      const add = suggs.map(String).map(x => x.trim().toLowerCase())
+        .filter(x => x && !have.includes(x)).slice(0, 4);
+      if (add.length){
+        state.chips[i] = [...splitChip(state.chips[i]), ...add].join(" OR ");
+        state.varOpen = state.varOpen || {};
+        state.varOpen[i] = true;
+        added += add.length;
+      }
+    });
+  } catch (e){
+    claudeStatus("API: could not fetch related terms (" + e.message + ")", true);
+  }
+  renderVars();
+  return added;
+}
+// Start a fetch for any chip that has not had related terms yet. Returns the
+// promise when one was started, otherwise null.
+function ensureSuggestions(){
+  if (!apiKeyInput.value.trim()) return null;
+  const need = [...new Set(state.chips.map(chipHead))]
+    .filter(h => h && !state.suggested.has(h) && !state.suggPending.has(h));
+  if (!need.length) return null;
+  const p = suggestTerms(need).finally(() => {
+    need.forEach(h => state.suggPending.delete(h));
+    renderVars();
+  });
+  need.forEach(h => { state.suggested.add(h); state.suggPending.set(h, p); });
+  renderVars();
+  return p;
+}
+async function findRelatedTerms(){
+  const btn = document.getElementById("relatedBtn");
+  const suggList = document.getElementById("suggList");
+  btn.disabled = true; btn.textContent = "thinking…";
+  try {
+    const ex = await claudeCall(
+      `The user searches PubMed psychology literature. For each search term, suggest up to 4 related terms a relevant paper might use instead (synonyms, specific instances, formal names). Reply with ONLY a JSON object mapping each original term to an array of suggestion strings, lowercase. No prose.`,
+      JSON.stringify(activeChips()));
+    suggList.innerHTML = "";
+    for (const [pos, chip] of state.chips.entries()){
+      const suggs = lookupSuggs(ex, chip, pos);
+      if (!Array.isArray(suggs) || !suggs.length) continue;
+      const existing = splitChip(chip).map(v => v.replace(/^-/, "").toLowerCase());
+      const group = document.createElement("div");
+      group.className = "sugg-group";
+      group.innerHTML = `<span class="for">${escapeHTML(chip.split(/\s+OR\s+/i)[0])} +</span> `;
+      let chipVal = chip;
+      suggs.map(String).filter(s => !existing.includes(s.toLowerCase())).forEach(s => {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "sugg"; b.textContent = s;
+        b.addEventListener("click", () => {
+          const idx = state.chips.indexOf(chipVal);
+          if (idx < 0){ group.remove(); return; }
+          state.chips[idx] = state.chips[idx] + " OR " + s;
+          chipVal = state.chips[idx];
+          b.remove();
+          renderVars();
+          document.getElementById("reSearchBtn").style.display = "";
+        });
+        group.appendChild(b);
+      });
+      suggList.appendChild(group);
+    }
+    if (!suggList.children.length) suggList.textContent = "no suggestions.";
+  } catch (err){
+    suggList.textContent = "API: " + err.message;
+  } finally {
+    btn.disabled = false; btn.textContent = "related terms";
+  }
+}
+function renderLoadMore(){
+  document.getElementById("loadMore")?.remove();
+  const morePm = state.sources.includes("pubmed") && state.pmOffset < state.pmTotal;
+  const moreEp = state.sources.includes("epmc") && state.cursor && state.epShown < state.epTotal;
+  const moreOa = state.sources.includes("openalex") && state.oaCursor && state.oaShown < state.oaTotal;
+  const moreWos = state.sources.includes("wos") && state.wosShown < state.wosTotal;
+  if (!morePm && !moreEp && !moreOa && !moreWos) return;
+  const b = document.createElement("button");
+  b.id = "loadMore"; b.type = "button"; b.textContent = "load more";
+  b.addEventListener("click", () => runSearch(false));
+  resultsEl.appendChild(b);
+}
+function renderNoResults(){
+  clearResults();
+  const hasKey = !!apiKeyInput.value.trim();
+  resultsEl.innerHTML = `<p class="state">k = 0 for ${escapeHTML(activeChips().join(" AND "))}. try OR synonyms${hasKey ? " (see suggestions in the variables box)" : ""}, a broader design, or unticking psych only.</p>`;
+}
+function renderError(err, fresh){
+  if (err.perSource){
+    const div = document.createElement("div");
+    div.className = "state";
+    div.innerHTML = `<p class="err">${escapeHTML(String(err.message))}</p><button class="retry" type="button">retry</button>`;
+    div.querySelector(".retry").addEventListener("click", () => { div.remove(); runSearch(fresh); });
+    if (fresh) clearResults();
+    resultsEl.appendChild(div);
+    return;
+  }
+  const netErr = /Failed to fetch|NetworkError|load failed/i.test(String(err.message||err));
+  const msg = netErr && location.protocol === "file:"
+    ? `this browser blocks web requests from local files. double-click <b>Start cut.command</b> in the folder instead.`
+    : netErr
+    ? `pubmed didn’t respond — offline, or NCBI rate limit (~3 req/s). wait a moment.`
+    : `pubmed error: ${escapeHTML(String(err.message || err))}`;
+  const div = document.createElement("div");
+  div.className = "state";
+  div.innerHTML = `<p class="err">${msg}</p><button class="retry" type="button">retry</button>`;
+  div.querySelector(".retry").addEventListener("click", () => { div.remove(); runSearch(fresh); });
+  if (fresh) clearResults();
+  resultsEl.appendChild(div);
+}
+
+/* ---------- deep links ---------- */
+function applyParams(){
+  const p = new URLSearchParams(location.search);
+  if (!p.get("vars")) return false;
+  state.chips = p.get("vars").split("|").map(s=>s.trim()).filter(Boolean);
+  state.chips.forEach(c => state.suggested.add(chipHead(c)));
+  if (p.get("design")) state.designs = p.get("design").split(",").filter(k => DESIGNS.some(d => d.key === k));
+  if (p.get("psych")==="0") document.getElementById("psychOnly").checked = false;
+  if (p.get("humans")==="1") document.getElementById("humansOnly").checked = true;
+  if (/^\d{4}$/.test(p.get("from")||"")) document.getElementById("yrFrom").value = p.get("from");
+  if (/^\d{4}$/.test(p.get("to")||"")) document.getElementById("yrTo").value = p.get("to");
+  if (["relevance","pub_date"].includes(p.get("sort"))) document.getElementById("sortSel").value = p.get("sort");
+  if (p.get("src")){
+    document.getElementById("srcPubmed").checked = p.get("src").includes("pubmed");
+    document.getElementById("srcEpmc").checked = p.get("src").includes("epmc");
+    document.getElementById("srcOa").checked = p.get("src").includes("openalex");
+    document.getElementById("srcWos").checked = p.get("src").includes("wos");
+  }
+  renderVars();
+  syncDesignBoxes();
+  runSearch(true);
+  return true;
+}
+renderVars(); renderNums();
+applyParams();
+</script>
+</body>
+</html>
