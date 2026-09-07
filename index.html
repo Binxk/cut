@@ -41,7 +41,7 @@ FORM: User-pinned direction (beats the seed roll, per brief).
   #searchbar.collapsed .summary { display:flex; gap:1.5rem; flex-wrap:wrap; align-items:baseline; }
   .srow { display:flex; gap:1rem; flex-wrap:wrap; align-items:baseline; margin-bottom:.5rem; }
   .srow:last-child { margin-bottom:0; }
-  .slabel { width:6.5ch; flex:none; }
+  .slabel { width:10ch; flex:none; font-weight:bold; }
   #termInput {
     border:1px solid #000; padding:.2rem .5rem; width:24rem; max-width:100%;
   }
@@ -148,7 +148,7 @@ FORM: User-pinned direction (beats the seed roll, per brief).
 <section id="searchbar" aria-label="search">
   <div class="full">
     <div class="srow">
-      <span class="slabel">terms</span>
+      <span class="slabel">variables</span>
       <input id="termInput" type="text" placeholder="e.g. sleep — enter to add" aria-label="variable term">
     </div>
     <div class="srow">
@@ -1385,6 +1385,39 @@ function extractSystem(){
 "n": number or null (the size of the ANALYSED sample that the findings refer to — not the screened, invited, or recruited total; sum analysed subgroups; null if not stated). CONSISTENCY: if any finding mentions an n, "n" must agree with it}
 No prose, no markdown.`;
 }
+// Map the free-text design the API returns onto a DESIGNS key. null = can't tell (keep).
+// "other" = explicitly non-empirical, so it can't satisfy any selected design.
+function designKeyFromText(str){
+  const t = String(str || "").toLowerCase();
+  if (!t) return null;
+  if (/meta[- ]?anal/.test(t)) return "meta";
+  if (/systematic review|scoping review|umbrella review/.test(t)) return "sysrev";
+  if (/randomi[sz]ed|\brct\b/.test(t)) return "rct";
+  if (/\btrial\b|quasi[- ]?experiment|\bexperiment(al)?\b|intervention study/.test(t)) return "trial";
+  if (/cross[- ]?sectional|longitudinal|cohort|case[- ]control|observational|survey|correlational|prospective|retrospective|\btwin\b|diary|momentary|secondary analysis|registry|register[- ]based|naturalistic/.test(t)) return "obs";
+  if (/narrative review|literature review|\breview\b|commentary|editorial|conceptual|theoretical|opinion|perspective|non[- ]?empirical|workshop|conference abstract|protocol|case report|case study|case series|qualitative|interview|book chapter|letter/.test(t)) return "other";
+  return null;
+}
+// True when the user picked designs and the API-identified design is not one of them.
+function designMismatch(designText){
+  const screen = state.designScreen?.length ? state.designScreen : state.designs;
+  if (!screen.length) return false;
+  const k = designKeyFromText(designText);
+  if (k === null) return false;
+  if (screen.includes(k)) return false;
+  if (k === "rct" && screen.includes("trial")) return false;
+  if (k === "meta" && screen.includes("sysrev")) return false;
+  return true;
+}
+// Drop a study from the page once we know its design doesn't fit the search.
+function dropEntry(e){
+  e.el.closest(".study-row")?.remove();
+  state.selected.delete(e.art.url);
+  if (e.nsIdx != null) state.loadedNs[e.nsIdx] = null;
+  state.offset = Math.max(0, state.offset - 1);
+  state.total = Math.max(0, state.total - 1);
+  renderPicks();
+}
 function claudeGap(e){ return e.n == null || !e.findings.length || !e.analyses.length; }
 async function runClaudePass(entries){
   if (state.claudeMode === "off") return;
@@ -1392,7 +1425,7 @@ async function runClaudePass(entries){
   if (!targets.length) return;
   targets.forEach(e => { e.pending = true; e.el.innerHTML = databoxHTML(e); });
   claudeStatus(`claude: reading ${targets.length} abstract${targets.length === 1 ? "" : "s"}…`);
-  let failed = null, errCount = 0, lastErr = "";
+  let failed = null, errCount = 0, lastErr = "", dropped = 0;
   const queue = [...targets];
   await Promise.all(Array.from({ length: 3 }, async () => {
     while (queue.length && !failed){
@@ -1419,6 +1452,12 @@ async function runClaudePass(entries){
           }
         }
         if (ex.design) e.design = String(ex.design);
+        if (ex.design && designMismatch(e.design)){
+          e.pending = false;
+          dropEntry(e);
+          dropped++;
+          continue;
+        }
         if (typeof ex.tests_link === "boolean") e.testsLink = ex.tests_link;
         if (Array.isArray(ex.analysis) && ex.analysis.length) e.analyses = ex.analysis.map(String);
         const normF = arr => arr.slice(0, 4).map(f =>
@@ -1449,8 +1488,10 @@ async function runClaudePass(entries){
     if (e.pending){ e.pending = false; e.el.innerHTML = databoxHTML(e); }
   });
   renderNums();
-  claudeStatus(failed ? `claude: ${failed}`
-    : errCount ? `API: ${errCount} abstract${errCount > 1 ? "s" : ""} failed (${lastErr})` : "",
+  const droppedMsg = dropped ? `removed ${dropped} stud${dropped === 1 ? "y" : "ies"} whose design doesn\u2019t match the search` : "";
+  claudeStatus(failed ? `API: ${failed}`
+    : errCount ? `API: ${errCount} abstract${errCount > 1 ? "s" : ""} failed (${lastErr})${droppedMsg ? " \u00b7 " + droppedMsg : ""}`
+    : droppedMsg,
     !!(failed || errCount));
 }
 const ftCache = new Map();
