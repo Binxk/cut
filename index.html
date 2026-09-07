@@ -370,19 +370,57 @@ function resetResults(){
 }
 
 /* ---------- search bar ---------- */
-DESIGNS.forEach(d => {
+// rct, any trial and observational are offered as one "primary quantitative data"
+// box; the dropdown beside it isolates a subtype when needed.
+const PRIMARY = ["rct", "trial", "obs"];
+const PRIMARY_SUB = [["all", "all"], ["rct", "rct only"], ["trial", "any trial"], ["obs", "observational only"]];
+["meta", "sysrev"].forEach(key => {
+  const d = DESIGNS.find(x => x.key === key);
   const lab = document.createElement("label");
   lab.className = "tog";
   const cb = document.createElement("input");
-  cb.type = "checkbox"; cb.value = d.key;
-  cb.addEventListener("change", () => {
-    state.designs = [...designPicker.querySelectorAll("input:checked")].map(c => c.value);
-  });
+  cb.type = "checkbox"; cb.value = d.key; cb.className = "dopt";
+  cb.addEventListener("change", readDesignPicker);
   lab.append(cb, document.createTextNode(" " + d.label));
   designPicker.appendChild(lab);
 });
+{
+  const lab = document.createElement("label");
+  lab.className = "tog";
+  const cb = document.createElement("input");
+  cb.type = "checkbox"; cb.id = "primaryCb";
+  cb.addEventListener("change", readDesignPicker);
+  const sel = document.createElement("select");
+  sel.id = "primarySel"; sel.disabled = true;
+  sel.setAttribute("aria-label", "which primary quantitative designs");
+  PRIMARY_SUB.forEach(([v, t]) => { const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o); });
+  sel.addEventListener("change", readDesignPicker);
+  lab.append(cb, document.createTextNode(" primary quantitative data "), sel);
+  designPicker.appendChild(lab);
+}
+function readDesignPicker(){
+  const ds = [...designPicker.querySelectorAll("input.dopt:checked")].map(c => c.value);
+  const pcb = document.getElementById("primaryCb"), psel = document.getElementById("primarySel");
+  psel.disabled = !pcb.checked;
+  if (pcb.checked) ds.push(...(psel.value === "all" ? PRIMARY : [psel.value]));
+  state.designs = ds;
+}
 function syncDesignBoxes(){
-  designPicker.querySelectorAll("input").forEach(cb => { cb.checked = state.designs.includes(cb.value); });
+  designPicker.querySelectorAll("input.dopt").forEach(cb => { cb.checked = state.designs.includes(cb.value); });
+  const pcb = document.getElementById("primaryCb"), psel = document.getElementById("primarySel");
+  const prim = PRIMARY.filter(k => state.designs.includes(k));
+  pcb.checked = prim.length > 0;
+  psel.value = prim.length === PRIMARY.length ? "all" : (prim[0] || "all");
+  psel.disabled = !pcb.checked;
+}
+function designLabels(){
+  const out = [];
+  if (state.designs.includes("meta")) out.push("meta-analysis");
+  if (state.designs.includes("sysrev")) out.push("systematic review");
+  const prim = PRIMARY.filter(k => state.designs.includes(k));
+  if (prim.length === PRIMARY.length) out.push("primary quantitative data");
+  else prim.forEach(k => out.push(DESIGNS.find(d => d.key === k).label));
+  return out;
 }
 
 /* ---------- claude controls ---------- */
@@ -472,7 +510,7 @@ document.getElementById("reSearchBtn").addEventListener("click", () => {
   runSearch(true);
 });
 function collapseBar(){
-  const labels = DESIGNS.filter(x => state.designs.includes(x.key)).map(x => x.label);
+  const labels = designLabels();
   document.getElementById("sumline").textContent =
     activeChips().join(" AND ") + (labels.length ? ` — ${labels.join(", ")}` : "");
   searchbar.classList.add("collapsed");
@@ -1344,9 +1382,11 @@ function claudeStatus(msg, isErr){
   }
   el.innerHTML = isErr ? `<span class="err">${escapeHTML(msg)}</span>` : escapeHTML(msg);
 }
-async function claudeCall(system, userText){
+async function claudeCall(system, userText, opts = {}){
   const key = apiKeyInput.value.trim();
   if (!key) throw new Error("add an api key first");
+  const model = document.getElementById("modelSel").value;
+  const extra = opts.effort && !/haiku/.test(model) ? { output_config: { effort: opts.effort } } : {};
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -1356,10 +1396,11 @@ async function claudeCall(system, userText){
       "anthropic-dangerous-direct-browser-access": "true",
     },
     body: JSON.stringify({
-      model: document.getElementById("modelSel").value,
+      model,
       max_tokens: 6000,
       system,
       messages: [{ role: "user", content: userText }],
+      ...extra,
     }),
   });
   if (!r.ok){
@@ -1419,13 +1460,47 @@ function dropEntry(e){
   renderPicks();
 }
 function claudeGap(e){ return e.n == null || !e.findings.length || !e.analyses.length; }
+function droppedMsg(n){ return n ? `removed ${n} stud${n === 1 ? "y" : "ies"} whose design doesn\u2019t match the search` : ""; }
+// Stage 1 of the API pass: one cheap call names every study's design, so studies
+// that don't fit the selected designs are dropped before any findings are paid for.
+async function screenDesigns(entries){
+  const screen = state.designScreen?.length ? state.designScreen : state.designs;
+  if (!screen.length || !entries.length) return { kept: entries, dropped: 0 };
+  claudeStatus(`API: checking the design of ${entries.length} stud${entries.length === 1 ? "y" : "ies"}\u2026`);
+  const items = entries.map((e, i) => ({
+    id: String(i), title: e.art.title,
+    abstract: e.art.abstractParts.map(p => p.text).join(" ").slice(0, 1500),
+  }));
+  let ex;
+  try {
+    ex = await claudeCall(
+      `For each psychology study, name its design in a few lowercase words, e.g. "rct", "cross-sectional survey", "cohort study", "meta-analysis", "systematic review", "narrative review", "case report", "conference abstract, non-empirical", "qualitative interviews". Reply with ONLY a JSON object mapping each id to its design string. No prose.`,
+      JSON.stringify(items), { effort: "low" });
+  } catch (err){
+    claudeStatus("API: design check failed (" + err.message + ") \u2014 continuing without it", true);
+    return { kept: entries, dropped: 0 };
+  }
+  const kept = []; let dropped = 0;
+  entries.forEach((e, i) => {
+    const d = ex && typeof ex === "object" ? (ex[String(i)] ?? ex[i]) : null;
+    if (typeof d === "string" && d.trim()){
+      e.design = d.trim();
+      if (designMismatch(e.design)){ dropEntry(e); dropped++; return; }
+      e.el.innerHTML = databoxHTML(e);
+    }
+    kept.push(e);
+  });
+  renderNums();
+  return { kept, dropped };
+}
 async function runClaudePass(entries){
   if (state.claudeMode === "off") return;
-  const targets = state.claudeMode === "all" ? [...entries] : entries.filter(claudeGap);
-  if (!targets.length) return;
+  const pre = await screenDesigns(entries);
+  const targets = state.claudeMode === "all" ? [...pre.kept] : pre.kept.filter(claudeGap);
+  if (!targets.length){ claudeStatus(droppedMsg(pre.dropped)); return; }
   targets.forEach(e => { e.pending = true; e.el.innerHTML = databoxHTML(e); });
-  claudeStatus(`claude: reading ${targets.length} abstract${targets.length === 1 ? "" : "s"}…`);
-  let failed = null, errCount = 0, lastErr = "", dropped = 0;
+  claudeStatus(`API: reading ${targets.length} abstract${targets.length === 1 ? "" : "s"}\u2026`);
+  let failed = null, errCount = 0, lastErr = "", dropped = pre.dropped;
   const queue = [...targets];
   await Promise.all(Array.from({ length: 3 }, async () => {
     while (queue.length && !failed){
@@ -1488,10 +1563,10 @@ async function runClaudePass(entries){
     if (e.pending){ e.pending = false; e.el.innerHTML = databoxHTML(e); }
   });
   renderNums();
-  const droppedMsg = dropped ? `removed ${dropped} stud${dropped === 1 ? "y" : "ies"} whose design doesn\u2019t match the search` : "";
+  const dm = droppedMsg(dropped);
   claudeStatus(failed ? `API: ${failed}`
-    : errCount ? `API: ${errCount} abstract${errCount > 1 ? "s" : ""} failed (${lastErr})${droppedMsg ? " \u00b7 " + droppedMsg : ""}`
-    : droppedMsg,
+    : errCount ? `API: ${errCount} abstract${errCount > 1 ? "s" : ""} failed (${lastErr})${dm ? " \u00b7 " + dm : ""}`
+    : dm,
     !!(failed || errCount));
 }
 const ftCache = new Map();
