@@ -33,8 +33,12 @@ FORM: User-pinned direction (beats the seed roll, per brief).
 
   header { padding:1.25rem 2rem 0; }
   header .wordmark { font-weight:bold; }
-  .hint { font-weight:normal; border:1px solid #000; padding:0 .35rem; margin-left:.3rem; cursor:help; }
-  .hint:hover, .hint:focus { color:#00f; border-color:#00f; }
+  .hint { position:relative; font-weight:normal; border:1px solid #000; padding:0 .35rem; margin-left:.3rem; cursor:help; }
+  .hint:hover, .hint:focus { color:#00f; border-color:#00f; outline:none; }
+  .hint::after { content:attr(data-tip); position:absolute; left:0; top:calc(100% + .4rem); z-index:5;
+    background:#fff; color:#000; border:1px solid #000; padding:.3rem .5rem; white-space:nowrap;
+    font-weight:normal; display:none; }
+  .hint:hover::after, .hint:focus::after { display:block; }
 
   /* ---------- search bar ---------- */
   #searchbar { padding:1rem 2rem; border-bottom:1px solid #000; }
@@ -185,7 +189,7 @@ FORM: User-pinned direction (beats the seed roll, per brief).
       </span>
     </div>
     <div class="srow">
-      <span class="slabel" style="width:auto">fill in findings with API <span class="hint" tabindex="0" title="use your Claude API to get a quick summary of the main results">?</span></span>
+      <span class="slabel" style="width:auto">fill in findings with API <span class="hint" tabindex="0" data-tip="use your Claude API to get a quick summary of the main results">?</span></span>
       <span id="claudeMode"></span>
       <span>model <select id="modelSel" aria-label="claude model">
         <option value="claude-opus-5" selected>opus 5</option>
