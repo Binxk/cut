@@ -417,9 +417,8 @@ function resetResults(){
 
 /* ---------- search bar ---------- */
 // rct, any trial and observational are offered as one "primary quantitative data"
-// box; the dropdown beside it isolates a subtype when needed.
+// box; ticking it ticks all three, and any mix can then be kept.
 const PRIMARY = ["rct", "trial", "obs"];
-const PRIMARY_SUB = [["all", "all"], ["rct", "rct only"], ["trial", "any trial"], ["obs", "observational only"]];
 function addDesignBox(key){
   const d = DESIGNS.find(x => x.key === key);
   const lab = document.createElement("label");
@@ -436,30 +435,46 @@ function addDesignBox(key){
   lab.className = "tog";
   const cb = document.createElement("input");
   cb.type = "checkbox"; cb.id = "primaryCb";
-  cb.addEventListener("change", readDesignPicker);
-  const sel = document.createElement("select");
-  sel.id = "primarySel"; sel.disabled = true;
-  sel.setAttribute("aria-label", "which primary quantitative designs");
-  PRIMARY_SUB.forEach(([v, t]) => { const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o); });
-  sel.addEventListener("change", readDesignPicker);
-  lab.append(cb, document.createTextNode(" primary quantitative data "), sel);
+  cb.addEventListener("change", () => {
+    document.querySelectorAll("#primarySub input").forEach(b => { b.checked = cb.checked; });
+    readDesignPicker();
+  });
+  lab.append(cb, document.createTextNode(" primary quantitative data"));
   designPicker.appendChild(lab);
+  const sub = document.createElement("span");
+  sub.id = "primarySub";
+  sub.append(document.createTextNode("["));
+  PRIMARY.forEach((key, i) => {
+    const d = DESIGNS.find(x => x.key === key);
+    const l = document.createElement("label");
+    l.className = "tog"; l.style.marginLeft = i ? ".8rem" : ".3rem";
+    const b = document.createElement("input");
+    b.type = "checkbox"; b.value = key; b.disabled = true;
+    b.addEventListener("change", () => {
+      cb.checked = [...document.querySelectorAll("#primarySub input")].some(x => x.checked);
+      readDesignPicker();
+    });
+    l.append(b, document.createTextNode(" " + d.label));
+    sub.appendChild(l);
+  });
+  sub.append(document.createTextNode(" ]"));
+  designPicker.appendChild(sub);
 }
 ["qual", "prereg"].forEach(addDesignBox);
 function readDesignPicker(){
   const ds = [...designPicker.querySelectorAll("input.dopt:checked")].map(c => c.value);
-  const pcb = document.getElementById("primaryCb"), psel = document.getElementById("primarySel");
-  psel.disabled = !pcb.checked;
-  if (pcb.checked) ds.push(...(psel.value === "all" ? PRIMARY : [psel.value]));
+  const pcb = document.getElementById("primaryCb");
+  const subs = [...document.querySelectorAll("#primarySub input")];
+  subs.forEach(b => { b.disabled = !pcb.checked; });
+  if (pcb.checked) ds.push(...subs.filter(b => b.checked).map(b => b.value));
   state.designs = ds;
 }
 function syncDesignBoxes(){
   designPicker.querySelectorAll("input.dopt").forEach(cb => { cb.checked = state.designs.includes(cb.value); });
-  const pcb = document.getElementById("primaryCb"), psel = document.getElementById("primarySel");
+  const pcb = document.getElementById("primaryCb");
   const prim = PRIMARY.filter(k => state.designs.includes(k));
   pcb.checked = prim.length > 0;
-  psel.value = prim.length === PRIMARY.length ? "all" : (prim[0] || "all");
-  psel.disabled = !pcb.checked;
+  document.querySelectorAll("#primarySub input").forEach(b => { b.checked = prim.includes(b.value); b.disabled = !pcb.checked; });
 }
 function designLabels(){
   const out = [];
