@@ -133,6 +133,13 @@ FORM: User-pinned direction (beats the seed roll, per brief).
   .state .err { color:#a00; }
   .retry { border:1px solid #000; padding:.1rem .8rem; margin-top:.3rem; }
 
+  /* intro: the dog gif as ascii, then the word, gone after a few seconds */
+  #intro { position:fixed; inset:0; z-index:99; background:#fff; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:1.2rem; cursor:crosshair; transition:opacity 1s ease; }
+  #intro.out { opacity:0; pointer-events:none; }
+  #intro pre { margin:0; font-family:Menlo, monospace; line-height:1.2; white-space:pre; color:#000; }
+  #intro .introWord { font-weight:bold; }
+  @media (prefers-reduced-motion: reduce){ #intro { display:none; } }
   @media (max-width:760px){
     header, #searchbar { padding-left:1rem; padding-right:1rem; }
     .layout { grid-template-columns:1fr; padding:1rem; }
@@ -142,6 +149,8 @@ FORM: User-pinned direction (beats the seed roll, per brief).
 </style>
 </head>
 <body>
+
+<div id="intro" aria-hidden="true"><pre id="introScreen"></pre><div class="introWord">cut</div></div>
 
 <header><span class="wordmark">cut</span></header>
 
@@ -159,12 +168,14 @@ FORM: User-pinned direction (beats the seed roll, per brief).
       <span class="slabel">scope</span>
       <label class="tog"><input type="checkbox" id="psychOnly" checked> psych only</label>
       <label class="tog"><input type="checkbox" id="humansOnly"> humans only</label>
+      <label class="tog"><input type="checkbox" id="engOnly"> english only</label>
       <span class="yr">years <input id="yrFrom" type="text" inputmode="numeric" maxlength="4" placeholder="1900" aria-label="year from"> – <input id="yrTo" type="text" inputmode="numeric" maxlength="4" placeholder="2026" aria-label="year to"></span>
       <span>sort <select id="sortSel" aria-label="sort"><option value="relevance">best match</option><option value="pub_date">newest</option></select></span>
       <span>source
         <label class="tog"><input type="checkbox" id="srcPubmed" checked> pubmed</label>
         <label class="tog"><input type="checkbox" id="srcEpmc"> europe pmc</label>
         <label class="tog"><input type="checkbox" id="srcOa"> openalex</label>
+        <label class="tog"><input type="checkbox" id="srcOsf"> osf registries</label>
         <label class="tog"><input type="checkbox" id="srcWos"> wos</label>
         <input id="wosKey" type="password" placeholder="wos api key" aria-label="web of science api key" autocomplete="off" style="width:11rem;border:1px solid #000;padding:.1rem .4rem">
         <button id="wosTestBtn" type="button" style="border:1px solid #000;padding:0 .5rem">test</button>
@@ -219,8 +230,37 @@ FORM: User-pinned direction (beats the seed roll, per brief).
   </main>
 </div>
 
+<script src="intro_frames.js"></script>
 <script>
 "use strict";
+
+/* ---------- intro ---------- */
+(() => {
+  const intro = document.getElementById("intro");
+  const data = window.CUT_INTRO;
+  if (!intro) return;
+  if (!data || !data.frames?.length || matchMedia("(prefers-reduced-motion: reduce)").matches){ intro.remove(); return; }
+  const screen = document.getElementById("introScreen");
+  const { cols, rows, interval, frames } = data;
+  const fit = () => {
+    const fs = Math.min((innerWidth - 48) / (cols * 0.602), (innerHeight - 96) / (rows * 1.2), 11);
+    screen.style.fontSize = Math.max(4, fs) + "px";
+  };
+  fit();
+  addEventListener("resize", fit);
+  let i = 0;
+  screen.textContent = frames[0];
+  const timer = setInterval(() => { i = (i + 1) % frames.length; screen.textContent = frames[i]; }, interval);
+  let gone = false;
+  const dismiss = () => {
+    if (gone) return;
+    gone = true;
+    intro.classList.add("out");
+    setTimeout(() => { clearInterval(timer); removeEventListener("resize", fit); intro.remove(); }, 1100);
+  };
+  intro.addEventListener("click", dismiss);
+  setTimeout(dismiss, 3500);
+})();
 
 const DESIGNS = [
   { key:"meta",   label:"meta-analysis",     filter:`"meta-analysis"[pt]` },
@@ -228,9 +268,15 @@ const DESIGNS = [
   { key:"rct",    label:"rct",               filter:`"randomized controlled trial"[pt]` },
   { key:"trial",  label:"any trial",         filter:`"clinical trial"[pt]` },
   { key:"obs",    label:"observational",     filter:`(("observational study"[pt] OR "cohort studies"[mh] OR "case-control studies"[mh] OR "cross-sectional studies"[mh] OR "longitudinal studies"[mh]) NOT ("meta-analysis"[pt] OR "systematic review"[pt] OR "review"[pt]))` },
+  { key:"qual",   label:"qualitative",       filter:`("qualitative research"[mh] OR "qualitative"[tiab] OR "thematic analysis"[tiab] OR "focus groups"[mh] OR "grounded theory"[mh])` },
+  // preregistration = a registered plan or protocol, not an empirical paper that happens to be preregistered.
+  { key:"prereg", label:"preregistration",   filter:`("clinical trial protocol"[pt] OR "study protocol"[tiab] OR "registered report"[tiab] OR "protocol"[ti] OR "preregistration"[ti] OR "pre-registration"[ti])` },
 ];
 const DESIGN_NAME = { meta:"meta-analysis", sysrev:"systematic review", review:"review",
-  rct:"rct", trial:"clinical trial", obs:"observational", case:"case report", other:"untyped" };
+  rct:"rct", trial:"clinical trial", obs:"observational", case:"case report",
+  qual:"qualitative", prereg:"preregistration", other:"untyped" };
+// osf subject "Psychology" (bepress taxonomy) — used for the psych-only scope on osf registries.
+const OSF_PSYCH = "https://api.osf.io/v2/subjects/584240da54be81056cecac68";
 
 const PSYCH_FILTER = `("behavior and behavior mechanisms"[mh] OR "psychological phenomena"[mh] OR "mental disorders"[mh] OR "behavioral disciplines and activities"[mh])`;
 const EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
@@ -374,7 +420,7 @@ function resetResults(){
 // box; the dropdown beside it isolates a subtype when needed.
 const PRIMARY = ["rct", "trial", "obs"];
 const PRIMARY_SUB = [["all", "all"], ["rct", "rct only"], ["trial", "any trial"], ["obs", "observational only"]];
-["meta", "sysrev"].forEach(key => {
+function addDesignBox(key){
   const d = DESIGNS.find(x => x.key === key);
   const lab = document.createElement("label");
   lab.className = "tog";
@@ -383,7 +429,8 @@ const PRIMARY_SUB = [["all", "all"], ["rct", "rct only"], ["trial", "any trial"]
   cb.addEventListener("change", readDesignPicker);
   lab.append(cb, document.createTextNode(" " + d.label));
   designPicker.appendChild(lab);
-});
+}
+["meta", "sysrev"].forEach(addDesignBox);
 {
   const lab = document.createElement("label");
   lab.className = "tog";
@@ -398,6 +445,7 @@ const PRIMARY_SUB = [["all", "all"], ["rct", "rct only"], ["trial", "any trial"]
   lab.append(cb, document.createTextNode(" primary quantitative data "), sel);
   designPicker.appendChild(lab);
 }
+["qual", "prereg"].forEach(addDesignBox);
 function readDesignPicker(){
   const ds = [...designPicker.querySelectorAll("input.dopt:checked")].map(c => c.value);
   const pcb = document.getElementById("primaryCb"), psel = document.getElementById("primarySel");
@@ -420,6 +468,8 @@ function designLabels(){
   const prim = PRIMARY.filter(k => state.designs.includes(k));
   if (prim.length === PRIMARY.length) out.push("primary quantitative data");
   else prim.forEach(k => out.push(DESIGNS.find(d => d.key === k).label));
+  if (state.designs.includes("qual")) out.push("qualitative");
+  if (state.designs.includes("prereg")) out.push("preregistration");
   return out;
 }
 
@@ -451,6 +501,7 @@ function readSources(){
   if (document.getElementById("srcPubmed").checked) s.push("pubmed");
   if (document.getElementById("srcEpmc").checked) s.push("epmc");
   if (document.getElementById("srcOa").checked) s.push("openalex");
+  if (document.getElementById("srcOsf").checked) s.push("osf");
   if (document.getElementById("srcWos").checked) s.push("wos");
   if (!s.length){ document.getElementById("srcPubmed").checked = true; s.push("pubmed"); }
   return s;
@@ -477,12 +528,15 @@ document.getElementById("wosTestBtn").addEventListener("click", async () => {
     msg.style.color = "#a00";
   }
 });
-["srcPubmed","srcEpmc","srcOa","srcWos"].forEach(id =>
+["srcPubmed","srcEpmc","srcOa","srcOsf","srcWos"].forEach(id =>
   document.getElementById(id).addEventListener("change", () => {
     const pm = document.getElementById("srcPubmed").checked;
     const oa = document.getElementById("srcOa").checked;
-    document.getElementById("psychOnly").disabled = !pm && !oa;
+    const osf = document.getElementById("srcOsf").checked;
+    const lit = pm || oa || document.getElementById("srcEpmc").checked || document.getElementById("srcWos").checked;
+    document.getElementById("psychOnly").disabled = !pm && !oa && !osf;
     document.getElementById("humansOnly").disabled = !pm;
+    document.getElementById("engOnly").disabled = !lit;  // osf registries carry no language field
   }));
 
 function commitTerm(){
@@ -534,6 +588,7 @@ function buildTerm(){
   if (fs.length) parts.push(fs.length > 1 ? `(${fs.join(" OR ")})` : fs[0]);
   if (document.getElementById("psychOnly").checked) parts.push(PSYCH_FILTER);
   if (document.getElementById("humansOnly").checked) parts.push(`"humans"[mh]`);
+  if (document.getElementById("engOnly").checked) parts.push(`"english"[la]`);
   const yf = document.getElementById("yrFrom").value.trim();
   const yt = document.getElementById("yrTo").value.trim();
   if (/^\d{4}$/.test(yf) || /^\d{4}$/.test(yt))
@@ -573,6 +628,7 @@ async function runSearch(fresh, refetch){
     state.cursor = "*"; state.epTotal = 0; state.epShown = 0;
     state.oaCursor = "*"; state.oaTotal = 0; state.oaShown = 0;
     state.wosPage = 1; state.wosTotal = 0; state.wosShown = 0;
+    state.osfNext = null; state.osfTotal = 0; state.osfShown = 0;
     state.sort = document.getElementById("sortSel").value;
     state.sources = readSources();
     state.designScreen = null;
@@ -595,7 +651,8 @@ async function runSearch(fresh, refetch){
       : "";
     state.oaTerm = state.sources.includes("openalex") ? buildTermOa() : "";
     state.wosTerm = state.sources.includes("wos") ? buildTermWos() : "";
-    state.lastTerm = state.pmTerm || state.epTerm || state.oaTerm || state.wosTerm;
+    state.osfTerm = state.sources.includes("osf") ? buildTermOsf() : "";
+    state.lastTerm = state.pmTerm || state.epTerm || state.oaTerm || state.wosTerm || state.osfTerm;
   }
   setLoading(true);
   try {
@@ -642,6 +699,7 @@ async function runSearch(fresh, refetch){
         const filters = ["title_and_abstract.search:" + state.oaTerm.replace(/,/g, " "), "is_paratext:false"];
         if (document.getElementById("psychOnly").checked) filters.push("concepts.id:C15744967");
         if (state.sources.includes("pubmed")) filters.push("has_pmid:false");
+        if (document.getElementById("engOnly").checked) filters.push("language:en");
         const yf = document.getElementById("yrFrom").value.trim();
         const yt = document.getElementById("yrTo").value.trim();
         if (/^\d{4}$/.test(yf)) filters.push("from_publication_date:" + yf + "-01-01");
@@ -657,6 +715,29 @@ async function runSearch(fresh, refetch){
         arts = arts.filter(isRelevant);
         state.oaTotal = Math.max(0, state.oaTotal - (b - arts.length));
         state.oaShown += arts.length;
+        return arts;
+      })() });
+    }
+    if (state.sources.includes("osf") && (fresh || refetch || (state.osfNext && state.osfShown < state.osfTotal))){
+      jobs.push({ name: "osf registries", p: (async () => {
+        // share.osf.io is the search index behind osf.io/search; it allows browser requests directly.
+        let url = state.osfNext;
+        if (!url){
+          const q = ["cardSearchText=" + encodeURIComponent(state.osfTerm),
+            "cardSearchFilter[resourceType]=Registration", "page[size]=" + per, "acceptMediatype=application/json"];
+          if (document.getElementById("psychOnly").checked) q.push("cardSearchFilter[subject][any-of]=" + encodeURIComponent(OSF_PSYCH));
+          if (state.sort === "pub_date") q.push("sort=-dateCreated");
+          url = "https://share.osf.io/trove/index-card-search?" + q.join("&");
+        }
+        const d = await eFetchJSON(url);
+        state.osfTotal = d.meta?.total || 0;
+        state.osfNext = d.links?.next || null;
+        let arts = parseOsf(d);
+        if (!arts.length) state.osfNext = null;
+        const b = arts.length;
+        arts = arts.filter(isRelevant).filter(inYearRange);  // the index has no year filter; matches are fuzzy
+        state.osfTotal = Math.max(0, state.osfTotal - (b - arts.length));
+        state.osfShown += arts.length;
         return arts;
       })() });
     }
@@ -701,12 +782,14 @@ async function runSearch(fresh, refetch){
     state.total = (state.sources.includes("pubmed") ? state.pmTotal : 0) +
       (state.sources.includes("epmc") ? state.epTotal : 0) +
       (state.sources.includes("openalex") ? state.oaTotal : 0) +
-      (state.sources.includes("wos") ? state.wosTotal : 0);
+      (state.sources.includes("wos") ? state.wosTotal : 0) +
+      (state.sources.includes("osf") ? state.osfTotal : 0);
     state.translation = [
       state.pmTerm ? (state.pmTranslation || state.pmTerm) : "",
       state.epTerm ? "europe pmc: " + state.epTerm : "",
       state.oaTerm ? "openalex: " + state.oaTerm : "",
       state.wosTerm ? "wos: " + state.wosTerm : "",
+      state.osfTerm ? "osf registries: " + state.osfTerm + "  (every word must match; first ticked variant of each variable)" : "",
     ].filter(Boolean).join("\n\n");
     if ((fresh || refetch) && !state.total && state.designs.length && !state.designScreen){
       state.designScreen = [...state.designs];
@@ -716,12 +799,14 @@ async function runSearch(fresh, refetch){
       state.cursor = "*"; state.epTotal = 0; state.epShown = 0;
       state.oaCursor = "*"; state.oaTotal = 0; state.oaShown = 0;
       state.wosPage = 1; state.wosTotal = 0; state.wosShown = 0;
+      state.osfNext = null; state.osfTotal = 0; state.osfShown = 0;
       state.pmTerm = state.sources.includes("pubmed") ? buildTerm() : "";
       state.epTerm = state.sources.includes("epmc")
         ? buildTermEpmc() + (state.sources.includes("pubmed") ? " NOT SRC:MED" : "")
         : "";
       state.oaTerm = state.sources.includes("openalex") ? buildTermOa() : "";
       state.wosTerm = state.sources.includes("wos") ? buildTermWos() : "";
+      state.osfTerm = state.sources.includes("osf") ? buildTermOsf() : "";
       state.designs = saved;
       setTimeout(runSearch2, 0);
       return;
@@ -731,6 +816,7 @@ async function runSearch(fresh, refetch){
     const screen = state.designScreen?.length ? state.designScreen : state.designs;
     if (screen.length){
       shownArts = arts.filter(a => {
+        if (a.registry) return true;  // a registration is the planned study; it was asked for by ticking osf
         const k = classify(a).key;
         if (k === "other") return true;
         return screen.includes(k) || (k === "rct" && screen.includes("trial"));
@@ -776,10 +862,13 @@ function buildTermEpmc(){
     });
     parts.push(`(${ors.join(" OR ")})`);
   }
-  const PT = { meta:"meta-analysis", sysrev:"systematic review", rct:"randomized controlled trial",
-    trial:"clinical trial", obs:"observational study", case:"case reports" };
-  const fs = state.designs.map(k => `PUB_TYPE:"${PT[k]}"`);
+  const PT = { meta:'PUB_TYPE:"meta-analysis"', sysrev:'PUB_TYPE:"systematic review"', rct:'PUB_TYPE:"randomized controlled trial"',
+    trial:'PUB_TYPE:"clinical trial"', obs:'PUB_TYPE:"observational study"', case:'PUB_TYPE:"case reports"',
+    qual:'(TITLE:qualitative OR ABSTRACT:qualitative OR ABSTRACT:"thematic analysis" OR ABSTRACT:"focus group*")',
+    prereg:'(PUB_TYPE:"clinical trial protocol" OR ABSTRACT:"study protocol" OR ABSTRACT:"registered report" OR TITLE:protocol OR TITLE:preregistration OR TITLE:"pre-registration")' };
+  const fs = state.designs.map(k => PT[k]);
   if (fs.length) parts.push(fs.length > 1 ? `(${fs.join(" OR ")})` : fs[0]);
+  if (document.getElementById("engOnly").checked) parts.push("LANG:eng");
   const yf = document.getElementById("yrFrom").value.trim();
   const yt = document.getElementById("yrTo").value.trim();
   if (/^\d{4}$/.test(yf) || /^\d{4}$/.test(yt))
@@ -794,7 +883,8 @@ function buildTermOa(){
   }).join(" AND ");
   const DK = { meta:'"meta-analysis"', sysrev:'"systematic review"', rct:'"randomized controlled trial"',
     trial:'"clinical trial"', obs:'(cohort OR "cross-sectional" OR longitudinal OR "case-control" OR observational)',
-    case:'"case report"' };
+    case:'"case report"', qual:'(qualitative OR "thematic analysis" OR "focus groups")',
+    prereg:'("study protocol" OR "registered report" OR preregistration OR protocol)' };
   const ds = state.designs.map(k => DK[k]);
   return q + (ds.length ? " AND " + (ds.length > 1 ? `(${ds.join(" OR ")})` : ds[0]) : "");
 }
@@ -835,14 +925,55 @@ function buildTermWos(){
   }).join(" AND ");
   const DK = { meta:'"meta-analysis"', sysrev:'"systematic review"', rct:'"randomized controlled trial"',
     trial:'"clinical trial"', obs:'(cohort OR "cross-sectional" OR longitudinal OR "case-control" OR observational)',
-    case:'"case report"' };
+    case:'"case report"', qual:'(qualitative OR "thematic analysis" OR "focus group*")',
+    prereg:'("study protocol" OR "registered report" OR preregist* OR protocol)' };
   const ds = state.designs.map(k => DK[k]);
   let t = `TS=(${q}${ds.length ? " AND " + (ds.length > 1 ? `(${ds.join(" OR ")})` : ds[0]) : ""})`;
+  if (document.getElementById("engOnly").checked) t += " AND LA=(English)";
   const yf = document.getElementById("yrFrom").value.trim();
   const yt = document.getElementById("yrTo").value.trim();
   if (/^\d{4}$/.test(yf) || /^\d{4}$/.test(yt))
     t += ` AND PY=(${/^\d{4}$/.test(yf)?yf:"1800"}-${/^\d{4}$/.test(yt)?yt:"2100"})`;
   return t;
+}
+function buildTermOsf(){
+  // the osf index has no OR: every word must match. each variable contributes its first ticked variant;
+  // the index matches fuzzily, and isRelevant() then checks every variant against title + description.
+  return activeChips().map(chip => {
+    const t = chip.split(/\s+OR\s+/i).map(x => x.replace(/["*]/g, "").trim()).filter(Boolean)[0] || "";
+    return t.includes(" ") ? `"${t}"` : t;
+  }).filter(Boolean).join(" ");
+}
+function inYearRange(a){
+  const yf = document.getElementById("yrFrom").value.trim();
+  const yt = document.getElementById("yrTo").value.trim();
+  const y = parseInt(a.year, 10);
+  if (!y) return true;
+  if (/^\d{4}$/.test(yf) && y < parseInt(yf, 10)) return false;
+  if (/^\d{4}$/.test(yt) && y > parseInt(yt, 10)) return false;
+  return true;
+}
+// share.osf.io returns json-ld "index cards": every field is a list of {"@value"} or {"@id"} objects.
+function parseOsf(d){
+  const v = x => (Array.isArray(x) && x[0] && x[0]["@value"]) || "";
+  return (d.data || []).map(r => {
+    const id = String(r["@id"] || "").split("/").filter(Boolean).pop() || "";
+    const doi = (r.identifier || []).map(x => x["@value"] || "").find(x => /doi\.org/.test(x)) || "";
+    const kind = (r.conformsTo || []).map(c => v(c.title)).filter(Boolean).join(", ").toLowerCase();
+    const desc = v(r.description);
+    return {
+      pmid: "", registry: true,
+      title: v(r.title) || "[no title]",
+      journal: "osf registries" + (kind ? " \u00b7 " + kind : ""),
+      year: (v(r.dateCreated) || v(r.dateAvailable)).slice(0, 4),
+      authors: (r.creator || []).map(c => v(c["foaf:familyName"]) || v(c.name)).filter(Boolean),
+      abstractParts: desc ? [{ label: "", text: desc }] : [],
+      pubTypes: ["Preregistration"],
+      doi: doi.replace(/^https?:\/\/doi\.org\//, ""),
+      url: r["@id"] || `https://osf.io/${id}/`,
+      idLabel: `osf ${id}`,
+    };
+  });
 }
 function parseWos(d){
   return (d.hits || []).map(h => {
@@ -947,6 +1078,7 @@ function classify(art){
   if (has("Meta-Analysis")) key = "meta";
   else if (has("Systematic Review")) key = "sysrev";
   else if (has("Randomized Controlled Trial")) key = "rct";
+  else if (has("Clinical Trial Protocol") || has("Preregistration")) key = "prereg";
   else if (hasStart("Clinical Trial")) key = "trial";
   else if (has("Observational Study")) key = "obs";
   else if (has("Case Reports")) key = "case";
@@ -964,17 +1096,20 @@ function classify(art){
   T(/random(ized|ised|ly assigned)/, "randomized");
   T(/qualitative (study|interviews|analysis)|thematic analysis/, "qualitative");
   T(/pre[- ]?registered|preregistration/, "preregistered");
+  T(/\b(study|trial|research) protocol\b|registered report|\bthis (pre-?registration|protocol|registration)\b|\bprotocol for (a|an|the)\b|\bwe (will|plan to|propose to|aim to) (recruit|collect|analy[sz]e|conduct|run|test|examine)\b/, "protocol");
   T(/meta[- ]anal/, "meta-analytic");
   if (!key){
-    if (tags.includes("meta-analytic")) key = "meta";
+    if (tags.includes("protocol")) key = "prereg";
+    else if (tags.includes("meta-analytic")) key = "meta";
     else if (tags.includes("randomized") || tags.includes("double-blind")) key = "trial";
     else if (["cross-sectional","longitudinal","cohort","case-control","twin study","ema/diary"].some(t=>tags.includes(t))) key = "obs";
+    else if (tags.includes("qualitative")) key = "qual";
     else key = "other";
   }
   const primary = DESIGN_NAME[key];
   return { key, primary, tags: tags.filter(t =>
     t !== primary && !(t === "meta-analytic" && (key === "meta" || key === "sysrev"))
-    && !(t === "randomized" && key === "rct")) };
+    && !(t === "randomized" && key === "rct") && !(t === "protocol" && key === "prereg")) };
 }
 
 /* ---------- numerics ---------- */
@@ -1148,9 +1283,10 @@ function renderStudies(arts){
       <div class="abstract">${aTxt}</div>
       <div class="row-actions">
         ${art.abstractParts.length ? `<button type="button" class="expander" aria-expanded="false">full abstract</button>` : ""}
-        <a href="${art.url}" target="_blank" rel="noopener">${art.pmid ? "pubmed" : art.idLabel.startsWith("openalex") ? "openalex" : art.idLabel.startsWith("wos") ? "wos" : "europe pmc"}</a>
+        <a href="${art.url}" target="_blank" rel="noopener">${art.pmid ? "pubmed" : art.idLabel.startsWith("openalex") ? "openalex" : art.idLabel.startsWith("wos") ? "wos" : art.idLabel.startsWith("osf") ? "osf" : "europe pmc"}</a>
         ${art.doi ? `<a href="https://doi.org/${encodeURIComponent(art.doi)}" target="_blank" rel="noopener">doi</a>` : ""}
         <label class="tog pick"><input type="checkbox" class="pickCb"> select</label>
+        <button type="button" class="dropBtn" title="remove this study from the results">remove</button>
       </div>`;
     const ex = box.querySelector(".expander");
     if (ex) ex.addEventListener("click", () => {
@@ -1174,6 +1310,7 @@ function renderStudies(arts){
       el: databox,
     };
     databox.innerHTML = databoxHTML(entry);
+    box.querySelector(".dropBtn").addEventListener("click", () => dropEntry(entry));
     const pickCb = box.querySelector(".pickCb");
     entry.pickCb = pickCb;
     pickCb.checked = state.selected.has(art.url);
@@ -1417,7 +1554,7 @@ async function claudeCall(system, userText, opts = {}){
 function extractSystem(){
   return `Extract structured data from the psychology study text. The user's search variables are: ${JSON.stringify(activeChips())}. Reply with ONLY a JSON object:
 {"variables": [{"term": string (variable/construct actually studied, lowercase, short), "category": string (which of the user's search variables it belongs under, copied verbatim from the list above, or "other")}] (max 6; assign a category ONLY if the study variable IS that construct or a direct subtype/measure of it — a related-but-distinct construct is "other", e.g. pornography use is NOT paraphilia, anxiety is NOT depression),
-"design": string (study design, short, e.g. "rct", "cross-sectional observational", "meta-analysis"),
+"design": string (study design, short, e.g. "rct", "cross-sectional observational", "meta-analysis", "qualitative interviews", "study protocol / preregistration"),
 "analysis": string[] (statistical analyses used, short names),
 "findings": string[] (max 4; each is ONE simple plain sentence: subject, relationship, object, then ALL reported stats in parentheses at the end — e.g. "Death anxiety positively correlated with OCD severity (r = .69, p = .005)" or "Mindfulness reduced anxiety vs waitlist (d = 0.63, 95% CI 0.42-0.84, p < .001)". Use percentages or descriptive numbers when no test statistics exist, e.g. "(25.8% vs 18%)"; omit the parentheses only when the text gives no numbers at all. STRICT: only findings about the user's search variables — when they searched several variables, the finding must concern the relationship AMONG those variables),
 "other_findings": string[] (max 4, same one-sentence format, every other key finding, including ones pairing a searched variable with non-searched variables),
@@ -1431,18 +1568,21 @@ No prose, no markdown.`;
 function designKeyFromText(str){
   const t = String(str || "").toLowerCase();
   if (!t) return null;
+  if (/preregist|pre-regist|registered report|\bprotocol\b|\bregistration\b/.test(t)) return "prereg";
   if (/meta[- ]?anal/.test(t)) return "meta";
   if (/systematic review|scoping review|umbrella review/.test(t)) return "sysrev";
   if (/randomi[sz]ed|\brct\b/.test(t)) return "rct";
   if (/\btrial\b|quasi[- ]?experiment|\bexperiment(al)?\b|intervention study/.test(t)) return "trial";
+  if (/qualitative|interview|focus group|thematic|grounded theory|ethnograph|phenomenolog/.test(t)) return "qual";
   if (/cross[- ]?sectional|longitudinal|cohort|case[- ]control|observational|survey|correlational|prospective|retrospective|\btwin\b|diary|momentary|secondary analysis|registry|register[- ]based|naturalistic/.test(t)) return "obs";
-  if (/narrative review|literature review|\breview\b|commentary|editorial|conceptual|theoretical|opinion|perspective|non[- ]?empirical|workshop|conference abstract|protocol|case report|case study|case series|qualitative|interview|book chapter|letter/.test(t)) return "other";
+  if (/narrative review|literature review|\breview\b|commentary|editorial|conceptual|theoretical|opinion|perspective|non[- ]?empirical|workshop|conference abstract|case report|case study|case series|book chapter|letter/.test(t)) return "other";
   return null;
 }
 // True when the user picked designs and the API-identified design is not one of them.
-function designMismatch(designText){
+function designMismatch(designText, art){
   const screen = state.designScreen?.length ? state.designScreen : state.designs;
   if (!screen.length) return false;
+  if (art?.registry) return false;  // an osf registration is kept whatever design was ticked
   const k = designKeyFromText(designText);
   if (k === null) return false;
   if (screen.includes(k)) return false;
@@ -1452,18 +1592,22 @@ function designMismatch(designText){
 }
 // Drop a study from the page once we know its design doesn't fit the search.
 function dropEntry(e){
+  if (e.removed) return;
+  e.removed = true;
   e.el.closest(".study-row")?.remove();
   state.selected.delete(e.art.url);
   if (e.nsIdx != null) state.loadedNs[e.nsIdx] = null;
   state.offset = Math.max(0, state.offset - 1);
   state.total = Math.max(0, state.total - 1);
   renderPicks();
+  renderNums();
 }
 function claudeGap(e){ return e.n == null || !e.findings.length || !e.analyses.length; }
 function droppedMsg(n){ return n ? `removed ${n} stud${n === 1 ? "y" : "ies"} whose design doesn\u2019t match the search` : ""; }
 // Stage 1 of the API pass: one cheap call names every study's design, so studies
 // that don't fit the selected designs are dropped before any findings are paid for.
 async function screenDesigns(entries){
+  entries = entries.filter(e => !e.removed);
   const screen = state.designScreen?.length ? state.designScreen : state.designs;
   if (!screen.length || !entries.length) return { kept: entries, dropped: 0 };
   claudeStatus(`API: checking the design of ${entries.length} stud${entries.length === 1 ? "y" : "ies"}\u2026`);
@@ -1474,7 +1618,7 @@ async function screenDesigns(entries){
   let ex;
   try {
     ex = await claudeCall(
-      `For each psychology study, name its design in a few lowercase words, e.g. "rct", "cross-sectional survey", "cohort study", "meta-analysis", "systematic review", "narrative review", "case report", "conference abstract, non-empirical", "qualitative interviews". Reply with ONLY a JSON object mapping each id to its design string. No prose.`,
+      `For each psychology study, name its design in a few lowercase words, e.g. "rct", "cross-sectional survey", "cohort study", "meta-analysis", "systematic review", "narrative review", "case report", "conference abstract, non-empirical", "qualitative interviews", "study protocol / preregistration" (a registered plan for a study not yet run). Reply with ONLY a JSON object mapping each id to its design string. No prose.`,
       JSON.stringify(items), { effort: "low" });
   } catch (err){
     claudeStatus("API: design check failed (" + err.message + ") \u2014 continuing without it", true);
@@ -1482,10 +1626,11 @@ async function screenDesigns(entries){
   }
   const kept = []; let dropped = 0;
   entries.forEach((e, i) => {
+    if (e.removed) return;
     const d = ex && typeof ex === "object" ? (ex[String(i)] ?? ex[i]) : null;
     if (typeof d === "string" && d.trim()){
       e.design = d.trim();
-      if (designMismatch(e.design)){ dropEntry(e); dropped++; return; }
+      if (designMismatch(e.design, e.art)){ dropEntry(e); dropped++; return; }
       e.el.innerHTML = databoxHTML(e);
     }
     kept.push(e);
@@ -1505,6 +1650,7 @@ async function runClaudePass(entries){
   await Promise.all(Array.from({ length: 3 }, async () => {
     while (queue.length && !failed){
       const e = queue.shift();
+      if (e.removed) continue;
       try {
         let bodyText = `Title: ${e.art.title}\n\nAbstract: ${e.art.abstractParts.map(p => (p.label ? p.label + ": " : "") + p.text).join("\n")}`;
         if (document.getElementById("fullText").checked){
@@ -1527,7 +1673,7 @@ async function runClaudePass(entries){
           }
         }
         if (ex.design) e.design = String(ex.design);
-        if (ex.design && designMismatch(e.design)){
+        if (ex.design && designMismatch(e.design, e.art)){
           e.pending = false;
           dropEntry(e);
           dropped++;
@@ -1560,7 +1706,7 @@ async function runClaudePass(entries){
     }
   }));
   targets.forEach(e => {
-    if (e.pending){ e.pending = false; e.el.innerHTML = databoxHTML(e); }
+    if (e.pending && !e.removed){ e.pending = false; e.el.innerHTML = databoxHTML(e); }
   });
   renderNums();
   const dm = droppedMsg(dropped);
@@ -1694,7 +1840,8 @@ function renderLoadMore(){
   const moreEp = state.sources.includes("epmc") && state.cursor && state.epShown < state.epTotal;
   const moreOa = state.sources.includes("openalex") && state.oaCursor && state.oaShown < state.oaTotal;
   const moreWos = state.sources.includes("wos") && state.wosShown < state.wosTotal;
-  if (!morePm && !moreEp && !moreOa && !moreWos) return;
+  const moreOsf = state.sources.includes("osf") && state.osfNext && state.osfShown < state.osfTotal;
+  if (!morePm && !moreEp && !moreOa && !moreWos && !moreOsf) return;
   const b = document.createElement("button");
   b.id = "loadMore"; b.type = "button"; b.textContent = "load more";
   b.addEventListener("click", () => runSearch(false));
@@ -1738,6 +1885,7 @@ function applyParams(){
   if (p.get("design")) state.designs = p.get("design").split(",").filter(k => DESIGNS.some(d => d.key === k));
   if (p.get("psych")==="0") document.getElementById("psychOnly").checked = false;
   if (p.get("humans")==="1") document.getElementById("humansOnly").checked = true;
+  if (p.get("lang")==="en") document.getElementById("engOnly").checked = true;
   if (/^\d{4}$/.test(p.get("from")||"")) document.getElementById("yrFrom").value = p.get("from");
   if (/^\d{4}$/.test(p.get("to")||"")) document.getElementById("yrTo").value = p.get("to");
   if (["relevance","pub_date"].includes(p.get("sort"))) document.getElementById("sortSel").value = p.get("sort");
@@ -1745,6 +1893,7 @@ function applyParams(){
     document.getElementById("srcPubmed").checked = p.get("src").includes("pubmed");
     document.getElementById("srcEpmc").checked = p.get("src").includes("epmc");
     document.getElementById("srcOa").checked = p.get("src").includes("openalex");
+    document.getElementById("srcOsf").checked = p.get("src").includes("osf");
     document.getElementById("srcWos").checked = p.get("src").includes("wos");
   }
   renderVars();
