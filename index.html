@@ -52,6 +52,8 @@ FORM: User-pinned direction (beats the seed roll, per brief).
     border:1px solid #000; padding:.2rem .5rem; width:24rem; max-width:100%;
   }
   #termInput:focus { outline:1px solid #00f; }
+  #skipInput { border:1px solid #000; padding:.2rem .5rem; width:16rem; max-width:100%; }
+  #skipInput:focus { outline:1px solid #00f; }
   .design-opt[aria-pressed="true"] { color:#00f; }
   .design-opt[aria-pressed="true"]::before { content:"["; }
   .design-opt[aria-pressed="true"]::after { content:"]"; }
@@ -150,7 +152,7 @@ FORM: User-pinned direction (beats the seed roll, per brief).
     header, #searchbar { padding-left:1rem; padding-right:1rem; }
     .layout { grid-template-columns:1fr; padding:1rem; }
     aside { position:static; }
-    #termInput { width:100%; }
+    #termInput, #skipInput { width:100%; }
   }
 </style>
 </head>
@@ -165,6 +167,11 @@ FORM: User-pinned direction (beats the seed roll, per brief).
     <div class="srow">
       <span class="slabel">variables</span>
       <input id="termInput" type="text" placeholder="e.g. sleep — enter to add" aria-label="variable term">
+    </div>
+    <div class="srow">
+      <span class="slabel" style="width:auto">not including these variables for main results</span>
+      <input id="skipInput" type="text" placeholder="e.g. age — enter to add" aria-label="variable to leave out of the main results">
+      <span id="skipList"></span>
     </div>
     <div class="srow">
       <span class="slabel">design</span>
@@ -288,7 +295,7 @@ const PSYCH_FILTER = `("behavior and behavior mechanisms"[mh] OR "psychological 
 const EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
 const PAGE = 25;
 
-const state = { chips:[], designs:[], offset:0, total:0, translation:"", lastTerm:"",
+const state = { chips:[], skips:[], designs:[], offset:0, total:0, translation:"", lastTerm:"",
   sort:"relevance", source:"pubmed", cursor:"*", loading:false, loadedNs:[], claudeMode:"off",
   selected:new Map(),
   suggested:new Set(),      // head terms that have had related terms fetched (or attempted)
@@ -573,6 +580,53 @@ termInput.addEventListener("keydown", e => {
     state.chips.pop(); renderVars();
   }
 });
+/* ---------- variables left out of the main results ---------- */
+// Findings about these variables are filed under "other findings" instead of the
+// findings box. They never change which studies the search returns.
+const skipInput = document.getElementById("skipInput");
+function renderSkips(){
+  const list = document.getElementById("skipList");
+  list.innerHTML = "";
+  state.skips.forEach((t, i) => {
+    const item = document.createElement("span");
+    item.className = "vitem";
+    item.appendChild(document.createTextNode(t));
+    const x = document.createElement("button");
+    x.type = "button"; x.textContent = "×";
+    x.setAttribute("aria-label", `stop leaving out ${t}`);
+    x.addEventListener("click", () => { state.skips.splice(i, 1); renderSkips(); skipsChanged(); });
+    item.appendChild(x);
+    list.appendChild(item);
+  });
+}
+function skipsChanged(){
+  if (state.lastTerm) document.getElementById("reSearchBtn").style.display = "";
+}
+function commitSkip(){
+  const added = skipInput.value.split(",").map(v => v.trim().replace(/^'|'$/g, "")).filter(Boolean)
+    .filter((v, i, all) => all.findIndex(o => o.toLowerCase() === v.toLowerCase()) === i)
+    .filter(v => !state.skips.some(k => k.toLowerCase() === v.toLowerCase()));
+  skipInput.value = "";
+  if (!added.length) return;
+  state.skips.push(...added);
+  renderSkips(); skipsChanged();
+}
+skipInput.addEventListener("keydown", e => {
+  if (e.key === "Enter"){
+    e.preventDefault();
+    if (!skipInput.value.trim() && state.chips.length) runSearch(true);
+    else commitSkip();
+  } else if (e.key === "Backspace" && !skipInput.value && state.skips.length){
+    state.skips.pop(); renderSkips(); skipsChanged();
+  }
+});
+// One regex over every left-out variable. Stricter than the search terms: a bare word
+// matches itself and its plural only ("age" is not "agency"); * and quotes still work.
+function skipRegex(){
+  const alts = state.skips.map(t =>
+    /^".*"$/.test(t) || t.includes("*") ? termPattern(t) : termPattern(`"${t}"`) + "(?:e?s)?");
+  return alts.length ? new RegExp(`(?<!\\w)(?:${alts.join("|")})(?!\\w)`, "i") : null;
+}
 searchBtn.addEventListener("click", () => runSearch(true));
 ["yrFrom","yrTo"].forEach(id =>
   document.getElementById(id).addEventListener("keydown", e => {
@@ -587,7 +641,8 @@ document.getElementById("reSearchBtn").addEventListener("click", () => {
 function collapseBar(){
   const labels = designLabels();
   document.getElementById("sumline").textContent =
-    activeChips().join(" AND ") + (labels.length ? ` — ${labels.join(", ")}` : "");
+    activeChips().join(" AND ") + (labels.length ? ` — ${labels.join(", ")}` : "") +
+    (state.skips.length ? ` — main results without: ${state.skips.join(", ")}` : "");
   searchbar.classList.add("collapsed");
 }
 function expandBar(){ searchbar.classList.remove("collapsed"); termInput.focus(); }
@@ -643,6 +698,7 @@ async function runSearch(fresh, refetch){
   if (refetch) fresh = false;
   if (fresh){
     commitTerm();
+    commitSkip();
     if (!state.chips.length){ termInput.focus(); return; }
     state.offset = 0; state.loadedNs = [];
     state.pmOffset = 0; state.pmTotal = 0;
@@ -1178,6 +1234,7 @@ function extractNums(art){
   const pctRe = /\d+\.?\d*\s?%\s?(?:vs\.?|versus|compared (?:to|with))\s?\d+\.?\d*\s?%/gi;
   const chipRes = activeChips().map(chip =>
     new RegExp(`(?<!\\w)(?:${chip.split(/\s+OR\s+/i).map(t=>t.trim()).filter(Boolean).map(termPattern).join("|")})`, "i"));
+  const skipRe = skipRegex();
   const seen = new Set();
   for (const sent of text.split(/(?<=[.!?])\s+/)){
     const stats = [...(sent.match(effRe) || []), ...(sent.match(testRe) || []),
@@ -1185,7 +1242,8 @@ function extractNums(art){
       .map(x => x.replace(/\s+/g," ").trim()).filter(x => !seen.has(x));
     if (!stats.length) continue;
     stats.forEach(x => seen.add(x));
-    const bucket = chipRes.length && chipRes.every(re => re.test(sent)) ? out.rel : out.other;
+    const bucket = chipRes.length && chipRes.every(re => re.test(sent)) && !(skipRe && skipRe.test(sent))
+      ? out.rel : out.other;
     bucket.push(stats.join(", "));
   }
   out.rel = out.rel.slice(0, 4);
@@ -1573,11 +1631,14 @@ async function claudeCall(system, userText, opts = {}){
   return JSON.parse(m[0]);
 }
 function extractSystem(){
+  const skip = state.skips.length
+    ? ` LEFT OUT: the user is NOT interested in these variables: ${JSON.stringify(state.skips)} — a finding whose subject or object is one of them (or a synonym or direct measure of one) goes in "other_findings", never here; a finding that only adjusts or controls for one stays here`
+    : "";
   return `Extract structured data from the psychology study text. The user's search variables are: ${JSON.stringify(activeChips())}. Reply with ONLY a JSON object:
 {"variables": [{"term": string (variable/construct actually studied, lowercase, short), "category": string (which of the user's search variables it belongs under, copied verbatim from the list above, or "other")}] (max 6; assign a category ONLY if the study variable IS that construct or a direct subtype/measure of it — a related-but-distinct construct is "other", e.g. pornography use is NOT paraphilia, anxiety is NOT depression),
 "design": string (study design, short, e.g. "rct", "cross-sectional observational", "meta-analysis", "qualitative interviews", "study protocol / preregistration"),
 "analysis": string[] (statistical analyses used, short names),
-"findings": string[] (max 4; each is ONE simple plain sentence: subject, relationship, object, then ALL reported stats in parentheses at the end — e.g. "Death anxiety positively correlated with OCD severity (r = .69, p = .005)" or "Mindfulness reduced anxiety vs waitlist (d = 0.63, 95% CI 0.42-0.84, p < .001)". Use percentages or descriptive numbers when no test statistics exist, e.g. "(25.8% vs 18%)"; omit the parentheses only when the text gives no numbers at all. STRICT: only findings about the user's search variables — when they searched several variables, the finding must concern the relationship AMONG those variables),
+"findings": string[] (max 4; each is ONE simple plain sentence: subject, relationship, object, then ALL reported stats in parentheses at the end — e.g. "Death anxiety positively correlated with OCD severity (r = .69, p = .005)" or "Mindfulness reduced anxiety vs waitlist (d = 0.63, 95% CI 0.42-0.84, p < .001)". Use percentages or descriptive numbers when no test statistics exist, e.g. "(25.8% vs 18%)"; omit the parentheses only when the text gives no numbers at all. STRICT: only findings about the user's search variables — when they searched several variables, the finding must concern the relationship AMONG those variables.${skip}),
 "other_findings": string[] (max 4, same one-sentence format, every other key finding, including ones pairing a searched variable with non-searched variables),
 "aliases": object (for EACH of the user's search variables — keys copied verbatim from the list above — up to 6 exact words/phrases the text uses to refer to THAT SAME construct, verbatim as they appear, e.g. "sexual offenders", "SOs"; never map a related-but-distinct construct as an alias),
 "tests_link": boolean or null (when the user searched 2+ variables: does the study DIRECTLY examine the relationship among them? false if they are merely both measured or mentioned; null for single-variable searches),
@@ -1903,6 +1964,7 @@ function applyParams(){
   if (!p.get("vars")) return false;
   state.chips = p.get("vars").split("|").map(s=>s.trim()).filter(Boolean);
   state.chips.forEach(c => state.suggested.add(chipHead(c)));
+  if (p.get("skip")) state.skips = p.get("skip").split("|").map(s => s.trim()).filter(Boolean);
   if (p.get("design")) state.designs = p.get("design").split(",").filter(k => DESIGNS.some(d => d.key === k));
   if (p.get("psych")==="0") document.getElementById("psychOnly").checked = false;
   if (p.get("humans")==="1") document.getElementById("humansOnly").checked = true;
@@ -1918,6 +1980,7 @@ function applyParams(){
     document.getElementById("srcWos").checked = p.get("src").includes("wos");
   }
   renderVars();
+  renderSkips();
   syncDesignBoxes();
   runSearch(true);
   return true;
