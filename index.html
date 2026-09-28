@@ -130,6 +130,9 @@ FORM: User-pinned direction (beats the seed roll, per brief).
     display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden;
   }
   .abstract.open { display:block; -webkit-line-clamp:unset; overflow:visible; }
+  .abstract.snipped { display:block; -webkit-line-clamp:unset; overflow:visible; }
+  .abstract.snipped .full, .abstract.snipped.open .snip { display:none; }
+  .abstract.snipped.open .full { display:block; }
   .abstract .slabel2 { font-weight:bold; }
   .row-actions { margin-top:.4rem; display:flex; gap:1.5rem; }
   .no-abstract { color:#555; }
@@ -204,6 +207,7 @@ FORM: User-pinned direction (beats the seed roll, per brief).
         <option value="claude-haiku-4-5">haiku 4.5</option>
       </select></span>
       <label class="tog"><input type="checkbox" id="fullText"> full text (open-access papers)</label>
+      <label class="tog"><input type="checkbox" id="linkOnly"> hide passing mentions</label><span class="hint" tabindex="0" data-tip="removes studies that mention your variables without testing the relationship between them. needs the API on and two or more variables">?</span>
       <input id="apiKey" type="password" placeholder="api key" aria-label="anthropic api key" autocomplete="off">
     </div>
     <div class="srow">
@@ -1307,6 +1311,24 @@ function isRelevant(art){
     chip.split(/\s+OR\s+/i).map(t => t.trim()).filter(Boolean)
       .some(t => new RegExp(`(?<!\\w)${termPattern(t)}`, "i").test(hay)));
 }
+// Collapsed preview: the first sentence that mentions each variable, so a match deep
+// in the abstract shows without opening it. null = the opening lines already show them.
+function matchSnippet(art){
+  const sents = art.abstractParts.flatMap(p => p.text.split(/(?<=[.!?])\s+/)).filter(Boolean);
+  const picked = new Set();
+  activeChips().forEach(chip => {
+    const alts = chip.split(/\s+OR\s+/i).map(t => t.trim()).filter(Boolean).map(termPattern);
+    if (!alts.length) return;
+    const re = new RegExp(`(?<!\\w)(?:${alts.join("|")})`, "i");
+    const i = sents.findIndex(s => re.test(s));
+    if (i >= 0) picked.add(i);
+  });
+  const idx = [...picked].sort((a, b) => a - b);
+  if (!idx.length || idx[idx.length - 1] === 0) return null;
+  return idx.map((i, n) =>
+    (i > 0 && (n === 0 || idx[n - 1] !== i - 1) ? "… " : "") + highlightCats(escapeHTML(sents[i]))
+  ).join(" ") + (idx[idx.length - 1] < sents.length - 1 ? " …" : "");
+}
 function highlightTerms(escapedText){
   const terms = activeChips().flatMap(c => c.split(/\s+OR\s+/i)).map(t=>t.trim()).filter(Boolean)
     .sort((a,b)=>b.length-a.length);
@@ -1339,11 +1361,13 @@ function renderStudies(arts){
     row.className = "study-row";
     const box = document.createElement("article");
     box.className = "study";
-    const aTxt = art.abstractParts.length
-      ? art.abstractParts.map(p =>
-          (p.label ? `<span class="slabel2">${escapeHTML(p.label.toLowerCase())}</span> ` : "") + highlightCats(escapeHTML(p.text))
-        ).join("<br>")
-      : `<span class="no-abstract">no abstract on the pubmed record.</span>`;
+    const fullTxt = art.abstractParts.map(p =>
+      (p.label ? `<span class="slabel2">${escapeHTML(p.label.toLowerCase())}</span> ` : "") + highlightCats(escapeHTML(p.text))
+    ).join("<br>");
+    const snip = art.abstractParts.length ? matchSnippet(art) : null;
+    const aTxt = !art.abstractParts.length ? `<span class="no-abstract">no abstract on the pubmed record.</span>`
+      : snip ? `<div class="snip">${snip}</div><div class="full">${fullTxt}</div>`
+      : fullTxt;
     const byAuth = art.authors.length
       ? escapeHTML(art.authors.slice(0,3).join(", ")) + (art.authors.length>3 ? " et al." : "")
       : "";
@@ -1359,7 +1383,7 @@ function renderStudies(arts){
       <h3><a href="${art.url}" target="_blank" rel="noopener">${highlightCats(escapeHTML(art.title))}</a></h3>
       <div class="byline">${byAuth}${byAuth&&art.journal?" · ":""}${escapeHTML(art.journal)} · ${escapeHTML(art.idLabel)}</div>
       <div class="numrow">${numbits}</div>
-      <div class="abstract">${aTxt}</div>
+      <div class="abstract${snip ? " snipped" : ""}">${aTxt}</div>
       <div class="row-actions">
         ${art.abstractParts.length ? `<button type="button" class="expander" aria-expanded="false">full abstract</button>` : ""}
         <a href="${art.url}" target="_blank" rel="noopener">${art.pmid ? "pubmed" : art.idLabel.startsWith("openalex") ? "openalex" : art.idLabel.startsWith("wos") ? "wos" : art.idLabel.startsWith("osf") ? "osf" : "europe pmc"}</a>
@@ -1399,6 +1423,7 @@ function renderStudies(arts){
       else state.selected.delete(art.url);
       renderPicks();
     });
+    row.entry = entry;
     row.append(box, databox);
     rows.appendChild(row);
     pageEntries.push(entry);
@@ -1686,6 +1711,16 @@ function dropEntry(e){
 }
 function claudeGap(e){ return e.n == null || !e.findings.length || !e.analyses.length; }
 function droppedMsg(n){ return n ? `removed ${n} stud${n === 1 ? "y" : "ies"} whose design doesn\u2019t match the search` : ""; }
+function unlinkedMsg(n){ return n ? `removed ${n} stud${n === 1 ? "y" : "ies"} that only mention${n === 1 ? "s" : ""} the variables in passing` : ""; }
+// True when the user asked to hide studies that never test the searched relationship.
+function hidePassing(e){ return e.testsLink === false && document.getElementById("linkOnly").checked; }
+document.getElementById("linkOnly").addEventListener("change", () => {
+  let n = 0;
+  document.querySelectorAll(".study-row").forEach(row => {
+    if (row.entry && hidePassing(row.entry)){ dropEntry(row.entry); n++; }
+  });
+  if (n) claudeStatus(unlinkedMsg(n));
+});
 // Stage 1 of the API pass: one cheap call names every study's design, so studies
 // that don't fit the selected designs are dropped before any findings are paid for.
 async function screenDesigns(entries){
@@ -1727,7 +1762,7 @@ async function runClaudePass(entries){
   if (!targets.length){ claudeStatus(droppedMsg(pre.dropped)); return; }
   targets.forEach(e => { e.pending = true; e.el.innerHTML = databoxHTML(e); });
   claudeStatus(`API: reading ${targets.length} abstract${targets.length === 1 ? "" : "s"}\u2026`);
-  let failed = null, errCount = 0, lastErr = "", dropped = pre.dropped;
+  let failed = null, errCount = 0, lastErr = "", dropped = pre.dropped, unlinked = 0;
   const queue = [...targets];
   await Promise.all(Array.from({ length: 3 }, async () => {
     while (queue.length && !failed){
@@ -1762,6 +1797,12 @@ async function runClaudePass(entries){
           continue;
         }
         if (typeof ex.tests_link === "boolean") e.testsLink = ex.tests_link;
+        if (hidePassing(e)){
+          e.pending = false;
+          dropEntry(e);
+          unlinked++;
+          continue;
+        }
         if (Array.isArray(ex.analysis) && ex.analysis.length) e.analyses = ex.analysis.map(String);
         const normF = arr => arr.slice(0, 4).map(f =>
           typeof f === "string" ? f
@@ -1791,7 +1832,7 @@ async function runClaudePass(entries){
     if (e.pending && !e.removed){ e.pending = false; e.el.innerHTML = databoxHTML(e); }
   });
   renderNums();
-  const dm = droppedMsg(dropped);
+  const dm = [droppedMsg(dropped), unlinkedMsg(unlinked)].filter(Boolean).join(" \u00b7 ");
   claudeStatus(failed ? `API: ${failed}`
     : errCount ? `API: ${errCount} abstract${errCount > 1 ? "s" : ""} failed (${lastErr})${dm ? " \u00b7 " + dm : ""}`
     : dm,
