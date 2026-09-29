@@ -30,6 +30,7 @@ FORM: User-pinned direction (beats the seed roll, per brief).
   input, select { font-family:Menlo, monospace; font-size:13px; color:#000; background:#fff; cursor:crosshair; }
   :is(a,button,input,select,summary):focus-visible { outline:1px solid #00f; outline-offset:1px; }
   mark { background:#FFE9A8; color:#000; }
+  :root { --othervar:#CDE3FF; }
 
   header { padding:1.25rem 2rem 0; }
   header .wordmark { font-weight:bold; }
@@ -114,6 +115,9 @@ FORM: User-pinned direction (beats the seed roll, per brief).
   .databox .drow { margin-bottom:.3rem; }
   .databox .drow b { font-weight:bold; }
   .databox .dhead { font-weight:bold; margin-top:.45rem; }
+  .databox .ovhead { text-align:right; color:#555; margin-top:.3rem; }
+  .databox .ovars { text-align:right; margin-bottom:.3rem; }
+  .databox .ovars .mini { background:var(--othervar); }
   .databox .dval { margin-bottom:.3rem; }
   .databox .findbox { background:#EFEFEF; border:1px solid #000; padding:.45rem .7rem; margin:.3rem 0 .5rem; }
   @media (max-width:1150px){
@@ -312,7 +316,7 @@ const searchBtn = document.getElementById("searchBtn");
 const searchbar = document.getElementById("searchbar");
 
 /* ---------- sidebar ---------- */
-const VARCOLORS = ["#FFB3B3","#B3F0B3","#CDE3FF","#FFE9A8","#E6DCF2","#FFE0CC"];
+const VARCOLORS = ["#FFB3B3","#B3F0B3","#FFD6EC","#FFE9A8","#E6DCF2","#FFE0CC"];
 const chipColor = i => VARCOLORS[((i % VARCOLORS.length) + VARCOLORS.length) % VARCOLORS.length];
 // A chip is "head OR variant OR variant". A variant prefixed with "-" is unticked:
 // it stays in the sidebar for the user to re-tick but is left out of the search
@@ -1361,9 +1365,7 @@ function renderStudies(arts){
     row.className = "study-row";
     const box = document.createElement("article");
     box.className = "study";
-    const fullTxt = art.abstractParts.map(p =>
-      (p.label ? `<span class="slabel2">${escapeHTML(p.label.toLowerCase())}</span> ` : "") + highlightCats(escapeHTML(p.text))
-    ).join("<br>");
+    const fullTxt = abstractHTML(art);
     const snip = art.abstractParts.length ? matchSnippet(art) : null;
     const aTxt = !art.abstractParts.length ? `<span class="no-abstract">no abstract on the pubmed record.</span>`
       : snip ? `<div class="snip">${snip}</div><div class="full">${fullTxt}</div>`
@@ -1411,6 +1413,7 @@ function renderStudies(arts){
       n: nums.n,
       nsIdx: state.loadedNs.length - 1,
       el: databox,
+      box,
     };
     databox.innerHTML = databoxHTML(entry);
     box.querySelector(".dropBtn").addEventListener("click", () => dropEntry(entry));
@@ -1591,19 +1594,48 @@ function highlightCats(escaped, aliases){
   });
   return html;
 }
+// Light blue marks for the study's other variables, applied after highlightCats.
+// Skips text already inside a mark or a tag so the searched variables keep their colour.
+function highlightOthers(html, vars){
+  const forms = (vars || []).filter(v => v.cat < 0).flatMap(v => v.inText || [])
+    .map(t => t.trim()).filter(t => t.length > 1).sort((a, b) => b.length - a.length);
+  if (!forms.length) return html;
+  const re = new RegExp(`(<mark[^>]*>.*?</mark>|<[^>]*>)|(?<![\\w&#])(${forms.map(termPattern).join("|")})`, "gi");
+  return html.replace(re, (m, skip, hit) => skip ? skip : `<mark style="background:var(--othervar)">${hit}</mark>`);
+}
+function highlightStudy(escaped, e){
+  return highlightOthers(highlightCats(escaped, e && e.aliases), e && e.vars);
+}
+function abstractHTML(art, e){
+  return art.abstractParts.map(p =>
+    (p.label ? `<span class="slabel2">${escapeHTML(p.label.toLowerCase())}</span> ` : "") + highlightStudy(escapeHTML(p.text), e)
+  ).join("<br>");
+}
+function rehighlight(e){
+  if (!e.box) return;
+  const a = e.box.querySelector("h3 a");
+  if (a) a.innerHTML = highlightStudy(escapeHTML(e.art.title), e);
+  const full = e.box.querySelector(".abstract .full") || e.box.querySelector(".abstract:not(.snipped)");
+  if (full && e.art.abstractParts.length) full.innerHTML = abstractHTML(e.art, e);
+  const snip = e.box.querySelector(".abstract .snip");
+  if (snip) snip.innerHTML = highlightOthers(snip.innerHTML, e.vars);
+}
 // Bold every number in an already-escaped/highlighted findings line; skips text inside tags.
 function boldNums(html){
   return html.replace(/(<[^>]*>)|([\u2212-]?(?:\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)%?)/g, (m, tag, num) => tag ? tag : `<b>${num}</b>`);
 }
 function databoxHTML(e){
-  const vars = e.vars.map(v =>
-    `<span class="mini"${v.cat >= 0 ? ` style="background:${chipColor(v.cat)};color:#000;border-color:#000"` : ""}>${escapeHTML(v.text)}</span>`).join("");
+  const mini = v =>
+    `<span class="mini"${v.cat >= 0 ? ` style="background:${chipColor(v.cat)};color:#000;border-color:#000"` : ""}>${escapeHTML(v.text)}</span>`;
+  const vars = e.vars.filter(v => v.cat >= 0).map(mini).join("");
+  const others = e.vars.filter(v => v.cat < 0).map(mini).join("");
   const findings = e.findings.length
     ? e.findings.map(f => `<div class="fline">${boldNums(highlightCats(escapeHTML(f), e.aliases))}</div>`).join("")
     : (e.pending ? `<span class="pend">...</span>` : "\u2014");
   const other = (e.otherFindings || []).map(f => `<div class="fline">${boldNums(highlightCats(escapeHTML(f), e.aliases))}</div>`).join("");
   return `<div class="drow"><b>year</b> ${e.year ? escapeHTML(e.year) : "\u2014"}</div>` +
-    `<div class="drow"><b>variables</b> ${e.vars.length ? vars : "\u2014"}</div>` +
+    `<div class="drow"><b>variables</b> ${vars || "\u2014"}</div>` +
+    (others ? `<div class="ovhead">variables not of interest</div><div class="ovars">${others}</div>` : "") +
     `<div class="drow"><b>design</b> ${escapeHTML(e.design) || "\u2014"}</div>` +
     `<div class="dhead">analysis</div><div class="dval">${e.analyses.length ? escapeHTML(e.analyses.join(", ")) : "\u2014"}</div>` +
     (e.testsLink === false ? `<div class="drow"><b>link</b> relationship not directly tested</div>` : "") +
@@ -1660,7 +1692,7 @@ function extractSystem(){
     ? ` LEFT OUT: the user is NOT interested in these variables: ${JSON.stringify(state.skips)} — a finding whose subject or object is one of them (or a synonym or direct measure of one) goes in "other_findings", never here; a finding that only adjusts or controls for one stays here`
     : "";
   return `Extract structured data from the psychology study text. The user's search variables are: ${JSON.stringify(activeChips())}. Reply with ONLY a JSON object:
-{"variables": [{"term": string (variable/construct actually studied, lowercase, short), "category": string (which of the user's search variables it belongs under, copied verbatim from the list above, or "other")}] (max 6; assign a category ONLY if the study variable IS that construct or a direct subtype/measure of it — a related-but-distinct construct is "other", e.g. pornography use is NOT paraphilia, anxiety is NOT depression),
+{"variables": [{"term": string (variable/construct actually studied, lowercase, short), "category": string (which of the user's search variables it belongs under, copied verbatim from the list above, or "other"), "in_text": string[] (up to 3 exact words/phrases the text uses for this variable, verbatim as they appear)}] (max 10; list EVERY variable the study measured or manipulated — predictors, outcomes, mediators, moderators, covariates — not only the searched ones; assign a category ONLY if the study variable IS that construct or a direct subtype/measure of it — a related-but-distinct construct is "other", e.g. pornography use is NOT paraphilia, anxiety is NOT depression),
 "design": string (study design, short, e.g. "rct", "cross-sectional observational", "meta-analysis", "qualitative interviews", "study protocol / preregistration"),
 "analysis": string[] (statistical analyses used, short names),
 "findings": string[] (max 4; each is ONE simple plain sentence: subject, relationship, object, then ALL reported stats in parentheses at the end — e.g. "Death anxiety positively correlated with OCD severity (r = .69, p = .005)" or "Mindfulness reduced anxiety vs waitlist (d = 0.63, 95% CI 0.42-0.84, p < .001)". Use percentages or descriptive numbers when no test statistics exist, e.g. "(25.8% vs 18%)"; omit the parentheses only when the text gives no numbers at all. STRICT: only findings about the user's search variables — when they searched several variables, the finding must concern the relationship AMONG those variables.${skip}),
@@ -1776,10 +1808,11 @@ async function runClaudePass(entries){
         }
         const ex = await claudeCall(extractSystem(), bodyText);
         if (Array.isArray(ex.variables) && ex.variables.length){
-          e.vars = ex.variables.slice(0, 6).map(v => {
-            if (typeof v === "string") return { text: v, cat: -1 };
+          e.vars = ex.variables.slice(0, 10).map(v => {
+            if (typeof v === "string") return { text: v, cat: -1, inText: [v] };
             const cat = activeChips().findIndex(c => c.toLowerCase() === String(v.category || "").toLowerCase());
-            return { text: String(v.term ?? ""), cat };
+            const inText = Array.isArray(v.in_text) ? v.in_text.map(String).filter(Boolean).slice(0, 3) : [];
+            return { text: String(v.term ?? ""), cat, inText: inText.length ? inText : [String(v.term ?? "")] };
           }).filter(v => v.text);
         }
         if (ex.aliases && typeof ex.aliases === "object"){
@@ -1816,6 +1849,7 @@ async function runClaudePass(entries){
         }
         e.pending = false;
         e.el.innerHTML = databoxHTML(e);
+        rehighlight(e);
         syncPick(e);
       } catch (err){
         if (/api key|authentication|unauthorized|credit|billing/i.test(String(err.message))){
