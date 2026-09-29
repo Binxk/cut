@@ -34,6 +34,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         super().do_GET()
 
+    def end_headers(self):
+        # Always serve the latest index.html instead of a cached copy after edits.
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
     def log_message(self, *args):
         pass
 

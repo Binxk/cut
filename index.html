@@ -330,6 +330,14 @@ function chipHead(chip){ return (splitChip(chip)[0] || "").toLowerCase(); }
 function activeChips(){
   return state.chips.map(chip => splitChip(chip).filter((v, vi) => !isOff(v, vi)).join(" OR "));
 }
+// Which search variable a model-given category names. The model often returns just one
+// variant ("depression") instead of the whole "depression OR low mood" chip, so any variant counts.
+function chipIndexFor(category){
+  const norm = s => String(s || "").toLowerCase().replace(/["*]/g, "").trim();
+  const want = norm(category);
+  if (!want || want === "other") return -1;
+  return activeChips().findIndex(c => norm(c) === want || c.split(/\s+OR\s+/i).some(t => norm(t) === want));
+}
 function renderVars(){
   const list = document.getElementById("varList");
   list.innerHTML = "";
@@ -1816,7 +1824,7 @@ async function runClaudePass(entries){
         if (Array.isArray(ex.variables) && ex.variables.length){
           e.vars = ex.variables.slice(0, 10).map(v => {
             if (typeof v === "string") return { text: v, cat: -1, inText: [v] };
-            const cat = activeChips().findIndex(c => c.toLowerCase() === String(v.category || "").toLowerCase());
+            const cat = chipIndexFor(v.category);
             const inText = Array.isArray(v.in_text) ? v.in_text.map(String).filter(Boolean).slice(0, 3) : [];
             return { text: String(v.term ?? ""), cat, inText: inText.length ? inText : [String(v.term ?? "")] };
           }).filter(v => v.text);
