@@ -115,6 +115,7 @@ FORM: User-pinned direction (beats the seed roll, per brief).
   .databox .drow { margin-bottom:.3rem; }
   .databox .drow b { font-weight:bold; }
   .databox .dhead { font-weight:bold; margin-top:.45rem; }
+  .databox .needapi { color:#555; }
   .databox .ovhead { text-align:right; color:#555; margin-top:.3rem; }
   .databox .ovars { text-align:right; margin-bottom:.3rem; }
   .databox .ovars .mini { background:var(--othervar); }
@@ -1624,24 +1625,29 @@ function rehighlight(e){
 function boldNums(html){
   return html.replace(/(<[^>]*>)|([\u2212-]?(?:\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)%?)/g, (m, tag, num) => tag ? tag : `<b>${num}</b>`);
 }
+// Shown in an empty databox field when the API pass is off, since only the API can fill it.
+const NEEDS_API = `<span class="needapi">add API key to unlock this feature</span>`;
+function apiOn(){ return state.claudeMode !== "off" && !!apiKeyInput.value.trim(); }
 function databoxHTML(e){
+  const blank = apiOn() ? "\u2014" : NEEDS_API;
   const mini = v =>
     `<span class="mini"${v.cat >= 0 ? ` style="background:${chipColor(v.cat)};color:#000;border-color:#000"` : ""}>${escapeHTML(v.text)}</span>`;
   const vars = e.vars.filter(v => v.cat >= 0).map(mini).join("");
   const others = e.vars.filter(v => v.cat < 0).map(mini).join("");
   const findings = e.findings.length
     ? e.findings.map(f => `<div class="fline">${boldNums(highlightCats(escapeHTML(f), e.aliases))}</div>`).join("")
-    : (e.pending ? `<span class="pend">...</span>` : "\u2014");
+    : (e.pending ? `<span class="pend">...</span>` : blank);
   const other = (e.otherFindings || []).map(f => `<div class="fline">${boldNums(highlightCats(escapeHTML(f), e.aliases))}</div>`).join("");
   return `<div class="drow"><b>year</b> ${e.year ? escapeHTML(e.year) : "\u2014"}</div>` +
-    `<div class="drow"><b>variables</b> ${vars || "\u2014"}</div>` +
-    (others ? `<div class="ovhead">variables not of interest</div><div class="ovars">${others}</div>` : "") +
-    `<div class="drow"><b>design</b> ${escapeHTML(e.design) || "\u2014"}</div>` +
-    `<div class="dhead">analysis</div><div class="dval">${e.analyses.length ? escapeHTML(e.analyses.join(", ")) : "\u2014"}</div>` +
+    `<div class="drow"><b>variables</b> ${vars || blank}</div>` +
+    (others ? `<div class="ovhead">variables not of interest</div><div class="ovars">${others}</div>`
+      : apiOn() ? "" : `<div class="ovhead">variables not of interest</div><div class="ovars">${NEEDS_API}</div>`) +
+    `<div class="drow"><b>design</b> ${escapeHTML(e.design) || blank}</div>` +
+    `<div class="dhead">analysis</div><div class="dval">${e.analyses.length ? escapeHTML(e.analyses.join(", ")) : blank}</div>` +
     (e.testsLink === false ? `<div class="drow"><b>link</b> relationship not directly tested</div>` : "") +
     (e.testsLink === true ? `<div class="drow"><b>link</b> directly tested</div>` : "") +
     `<div class="dhead">findings</div><div class="findbox">${findings}</div>` +
-    `<div class="drow"><b>N</b> ${e.n != null ? Number(e.n).toLocaleString("en-US") : "\u2014"}</div>` +
+    `<div class="drow"><b>N</b> ${e.n != null ? Number(e.n).toLocaleString("en-US") : blank}</div>` +
     (other ? `<details class="ofind"><summary>other findings</summary>${other}</details>` : "");
 }
 
