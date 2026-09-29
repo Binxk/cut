@@ -196,6 +196,7 @@ FORM: User-pinned direction (beats the seed roll, per brief).
         <label class="tog"><input type="checkbox" id="srcPubmed" checked> pubmed</label>
         <label class="tog"><input type="checkbox" id="srcEpmc"> europe pmc</label>
         <label class="tog"><input type="checkbox" id="srcOa"> openalex</label>
+        <input id="oaKey" type="password" placeholder="openalex api key (free)" aria-label="openalex api key" autocomplete="off" style="width:11rem;border:1px solid #000;padding:.1rem .4rem">
         <label class="tog"><input type="checkbox" id="srcOsf"> osf registries</label>
         <label class="tog"><input type="checkbox" id="srcWos"> wos</label>
         <input id="wosKey" type="password" placeholder="wos api key" aria-label="web of science api key" autocomplete="off" style="width:11rem;border:1px solid #000;padding:.1rem .4rem">
@@ -551,6 +552,13 @@ function readSources(){
   if (!s.length){ document.getElementById("srcPubmed").checked = true; s.push("pubmed"); }
   return s;
 }
+// Without a key openalex rate-limits anonymous searches when it is busy; a free key from openalex.org/rest-api avoids that.
+const oaKeyInput = document.getElementById("oaKey");
+try { oaKeyInput.value = localStorage.getItem("cut_oa_key") || ""; } catch(e){}
+oaKeyInput.addEventListener("change", () => {
+  try { localStorage.setItem("cut_oa_key", oaKeyInput.value.trim()); } catch(e){}
+});
+const oaKeyParam = () => oaKeyInput.value.trim() ? "&api_key=" + encodeURIComponent(oaKeyInput.value.trim()) : "";
 const wosKeyInput = document.getElementById("wosKey");
 try { wosKeyInput.value = localStorage.getItem("cut_wos_key") || ""; } catch(e){}
 wosKeyInput.addEventListener("change", () => {
@@ -810,7 +818,7 @@ async function runSearch(fresh, refetch){
         if (/^\d{4}$/.test(yt)) filters.push("to_publication_date:" + yt + "-12-31");
         const sortP = state.sort === "pub_date" ? "&sort=" + encodeURIComponent("publication_date:desc") : "";
         const d = await eFetchJSON("https://api.openalex.org/works?filter=" + encodeURIComponent(filters.join(",")) +
-          "&per-page=" + per + "&cursor=" + encodeURIComponent(state.oaCursor || "*") + sortP);
+          "&per-page=" + per + "&cursor=" + encodeURIComponent(state.oaCursor || "*") + sortP + oaKeyParam());
         state.oaTotal = d.meta?.count || 0;
         state.oaCursor = d.meta?.next_cursor || null;
         let arts = parseOa(d);
@@ -1108,7 +1116,7 @@ async function hydrateAbstracts(arts){
   if (!need.length) return;
   try {
     const d = await eFetchJSON("https://api.openalex.org/works?filter=" +
-      encodeURIComponent("doi:" + need.map(a => a.doi).join("|")) + "&per-page=" + Math.min(need.length, 50));
+      encodeURIComponent("doi:" + need.map(a => a.doi).join("|")) + "&per-page=" + Math.min(need.length, 50) + oaKeyParam());
     const byDoi = {};
     for (const w of d.results || []){
       if (!w.abstract_inverted_index) continue;
