@@ -355,9 +355,9 @@ function renderVars(){
     head.append(name, add, x);
     div.appendChild(head);
     add.addEventListener("click", () => {
-      if (div.querySelector("input")) return;
+      if (div.querySelector(".addterm")) return;
       const inp = document.createElement("input");
-      inp.type = "text"; inp.placeholder = "add term";
+      inp.type = "text"; inp.placeholder = "add term"; inp.className = "addterm";
       inp.style.cssText = "border:1px solid #000;padding:0 .3rem;width:10rem;max-width:100%;margin:.2rem 0 0";
       inp.addEventListener("keydown", ev => {
         if (ev.key === "Enter"){
@@ -1873,14 +1873,19 @@ function lookupSuggs(ex, term, pos){
   }
   return null;
 }
+const RELATED_PROMPT = `The user searches PubMed and similar databases for psychology studies. The variables are combined with AND, so read each one in the context of the others (e.g. "attachment" next to "infant" means infant-caregiver attachment). For each term in "terms", suggest up to 4 alternative search terms that relevant papers actually use in their titles and abstracts for the SAME construct: exact synonyms, the formal or clinical name, common spelling or hyphenation variants, a well-established abbreviation that is unambiguous in psychology, or a named subtype that papers use in place of the umbrella term.
+Never suggest: a broader parent concept ("mental health" for depression), a related but distinct construct ("anxiety" for depression, "impulsivity" for adhd), a specific questionnaire or scale, a treatment or outcome of the construct, or one of the other variables. How the search works: a multi-word suggestion is matched as an exact phrase in the title or abstract, and a one-word suggestion also matches any word it starts with. So a long or descriptive phrase ("biological essentialism about sex differences") finds almost nothing, and an extra word ("gender essentialist beliefs") only narrows the match. Use the shortest phrase an author would write, usually 1 or 2 words, never more than 3 (e.g. for "gender essentialism": "gender essentialist", "essentialist gender beliefs", "sex essentialism"). Never suggest a phrase that contains the original term or another of your suggestions, since the shorter one already finds it. Lowercase. Give fewer than 4, or none, rather than pad with weak terms.
+Reply with ONLY a JSON object mapping each term in "terms", copied verbatim, to an array of suggestion strings. No prose.`;
+function relatedInput(terms){
+  return JSON.stringify({ terms, all_variables: activeChips() });
+}
 // Fetch related terms for the given head terms and attach them to their chips,
 // all ticked. Resolves to the number of terms added.
 async function suggestTerms(heads){
   let added = 0;
   try {
     const ex = await claudeCall(
-      `The user searches psychology literature. For each search term, suggest up to 4 related terms a relevant paper might use instead (synonyms, specific instances, formal names) \u2014 same construct only, lowercase. Reply with ONLY a JSON object mapping each original term to an array of suggestion strings. No prose.`,
-      JSON.stringify(heads));
+      RELATED_PROMPT, relatedInput(heads));
     heads.forEach((h, pos) => {
       const i = state.chips.findIndex(c => chipHead(c) === h);
       if (i < 0) return;
@@ -1923,8 +1928,7 @@ async function findRelatedTerms(){
   btn.disabled = true; btn.textContent = "thinking…";
   try {
     const ex = await claudeCall(
-      `The user searches PubMed psychology literature. For each search term, suggest up to 4 related terms a relevant paper might use instead (synonyms, specific instances, formal names). Reply with ONLY a JSON object mapping each original term to an array of suggestion strings, lowercase. No prose.`,
-      JSON.stringify(activeChips()));
+      RELATED_PROMPT, relatedInput(activeChips()));
     suggList.innerHTML = "";
     for (const [pos, chip] of state.chips.entries()){
       const suggs = lookupSuggs(ex, chip, pos);
