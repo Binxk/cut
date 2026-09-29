@@ -690,14 +690,24 @@ function buildTerm(){
 }
 
 /* ---------- fetch ---------- */
+// Each source reports its own error; pass its reason on (e.g. openalex rate limits) instead of a bare code.
 async function eFetchJSON(url){
   const r = await fetch(url);
-  if (!r.ok) throw new Error(`NCBI returned ${r.status}`);
+  if (!r.ok){
+    const d = await r.json().catch(() => null);
+    const why = d && (d.message || d.error);
+    throw new Error(r.status === 429 ? `rate-limited${why ? " — " + why : ""}`
+      : r.status >= 500 ? `the service is down (${r.status}), not a problem with cut`
+      : why || `returned ${r.status}`);
+  }
   return r.json();
 }
 // The local relay passes Clarivate's status and JSON body through; read the
 // body even on an error status so the user sees "Unauthorized" rather than a code.
 async function wosFetch(url){
+  // The relay only exists in cut_server.py; the online copy has no /wos path.
+  if (!/^(127\.0\.0\.1|localhost)$/.test(location.hostname))
+    throw new Error("wos only works in the local app — open Start cut.command");
   const r = await fetch(url);
   const d = await r.json().catch(() => null);
   if (!r.ok) throw new Error((d && (d.message || d.error)) || `wos returned ${r.status}`);
@@ -705,7 +715,7 @@ async function wosFetch(url){
 }
 async function eFetchXML(url){
   const r = await fetch(url);
-  if (!r.ok) throw new Error(`NCBI returned ${r.status}`);
+  if (!r.ok) throw new Error(r.status >= 500 ? `the service is down (${r.status})` : `returned ${r.status}`);
   return new DOMParser().parseFromString(await r.text(), "text/xml");
 }
 
@@ -866,7 +876,11 @@ async function runSearch(fresh, refetch){
     const arts = [];
     settled.forEach((r, i) => {
       if (r.status === "fulfilled") arts.push(...r.value);
-      else failedSources.push(`${jobs[i].name}: ${r.reason?.message || r.reason}`);
+      else {
+        // A service that is down often drops the browser-access header too, so the browser only says NetworkError.
+        const m = String(r.reason?.message || r.reason);
+        failedSources.push(`${jobs[i].name}: ${/Failed to fetch|NetworkError|load failed/i.test(m) ? "could not reach it (the service is probably down; try later)" : m}`);
+      }
     });
     if (jobs.length && failedSources.length === jobs.length){
       const e = new Error(failedSources.join(" · "));
